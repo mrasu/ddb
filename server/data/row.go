@@ -21,3 +21,7 @@ func (r *Row) Inspect() {
 func (r *Row) Get(name string) string {
 	return r.columns[name]
 }
+
+func (r *Row) Update(name string, value string) {
+	r.columns[name] = value
+}
