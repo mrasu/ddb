@@ -8,10 +8,10 @@ import (
 type QueryType int
 
 const (
-	CreateDB QueryType = 0
-	CreateTable
-	Insert
-	Update
+	CreateDB    = 1
+	CreateTable = 100
+	Insert      = 200
+	Update      = 210
 )
 
 var NewLineBytes = []byte("\n")
@@ -70,21 +70,25 @@ type CreateDBChangeSet struct {
 
 type CreateTableChangeSet struct {
 	*AWalFormat
-	Lsn      int
-	DBName   string
-	Name     string
-	rowMetas []*RowMeta
+	Lsn      int        `json:"lsn"`
+	DBName   string     `json:"db_name"`
+	Name     string     `json:"name"`
+	RowMetas []*RowMeta `json:"row_metas"`
 }
 
 type InsertChangeSet struct {
 	*AWalFormat
-	Lsn     int
-	Columns map[string]string
+	Lsn       int               `json:"lsn"`
+	DBName    string            `json:"db_name"`
+	TableName string            `json:"table_name"`
+	Columns   map[string]string `json:"columns"`
 }
 
 type UpdateChangeSet struct {
 	*AWalFormat
-	Lsn        int
-	PrimaryKey int64
-	Columns    map[string]string
+	Lsn          int               `json:"lsn"`
+	DBName       string            `json:"db_name"`
+	TableName    string            `json:"table_name"`
+	PrimaryKeyId int64             `json:"pk_id"`
+	Columns      map[string]string `json:"columns"`
 }

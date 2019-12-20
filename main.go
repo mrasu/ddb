@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"io/ioutil"
+
 	"github.com/mrasu/ddb/server"
 	"github.com/rs/zerolog"
 )
@@ -11,22 +14,27 @@ func main() {
 
 	s, err := server.NewServer()
 	if err != nil {
-		panic(err)
+		die(err)
 	}
 
-	err = s.RecoverFromWal(0)
+	wal, err := ioutil.ReadFile("log/wal_0.log")
 	if err != nil {
-		panic(err)
+		die(err)
+	}
+	if len(wal) < 1 {
+		fmt.Println("<==========CREATE")
+		create(s)
+	} else {
+		fmt.Println("<==========RecoverFromWal")
+		err = s.RecoverFromWal(0)
+		if err != nil {
+			die(err)
+		}
 	}
 
-	// s.Query("CREATE DATABASE hello")
-	// s.Query("CREATE DATABASE hello")
-	s.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
-	s.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar')")
-	s.Query("INSERT INTO hello.world(message) VALUES ('baz')")
 	res := s.Query("SELECT * FROM hello.world")
 	res.Inspect()
-	s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
+	// s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
 	res = s.Query("SELECT * FROM hello.world")
 	res.Inspect()
 	res = s.Query("SELECT message FROM hello.world")
@@ -37,11 +45,26 @@ func main() {
 	s.Inspect()
 
 	/* TODO:
-	* Persist (WAL, recovery...)
+	* Persist to Disk (Wal and Snapshot)
 	* Transaction
 	* Join
 	* Index
 	* Replication
 	* Persist (Distribution, multiple write in one transaction)
 	 */
+}
+
+func create(s *server.Server) {
+	s.Query("CREATE DATABASE hello")
+	// s.Query("CREATE DATABASE hello")
+	s.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
+
+	s.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar')")
+	s.Query("INSERT INTO hello.world(message) VALUES ('baz')")
+	s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
+}
+
+func die(err error) {
+	fmt.Printf("error %+v\n", err)
+	panic(err)
 }

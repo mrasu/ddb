@@ -40,6 +40,25 @@ func (w *Wal) Write(cs structs.ChangeSet) error {
 		return err
 	}
 	w.lsn += 1
+
+	return w.writeFile(bs)
+}
+
+func (w *Wal) WriteSlice(css []structs.ChangeSet) error {
+	var bs []byte
+	for _, cs := range css {
+		b, err := cs.ToWalFormat(w.lsn)
+		if err != nil {
+			return err
+		}
+		bs = append(bs, b...)
+		w.lsn += 1
+	}
+
+	return w.writeFile(bs)
+}
+
+func (w *Wal) writeFile(bs []byte) error {
 	fmt.Println(string(bs))
 
 	file, err := os.OpenFile(w.fileName(), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
@@ -48,11 +67,15 @@ func (w *Wal) Write(cs structs.ChangeSet) error {
 	}
 	fmt.Println(file)
 
-	// _, err = file.Write(bs)
-	// if err != nil {
-	// 	return errors.Wrap(err, "failed to open file")
-	// }
+	_, err = file.Write(bs)
+	if err != nil {
+		return errors.Wrap(err, "failed to open file")
+	}
 	return nil
+}
+
+func (w *Wal) ProceedLsn(p int) {
+	w.lsn += p
 }
 
 func (w *Wal) fileName() string {
@@ -90,8 +113,14 @@ func (w *Wal) Read() ([]structs.ChangeSet, error) {
 
 		var cs structs.ChangeSet
 		switch num {
-		case int(structs.CreateDB):
+		case structs.CreateDB:
 			cs = &structs.CreateDBChangeSet{}
+		case structs.CreateTable:
+			cs = &structs.CreateTableChangeSet{}
+		case structs.Insert:
+			cs = &structs.InsertChangeSet{}
+		case structs.Update:
+			cs = &structs.UpdateChangeSet{}
 		default:
 			return nil, errors.Errorf("Invalid WAL number: %s", line)
 		}

@@ -41,7 +41,7 @@ func (t *Table) Inspect() {
 	}
 }
 
-func NewTable(ddl *sqlparser.DDL) (*Table, error) {
+func buildTable(ddl *sqlparser.DDL) (*Table, error) {
 	nn := ddl.NewName
 	var ms []*structs.RowMeta
 	for _, c := range ddl.TableSpec.Columns {
@@ -72,6 +72,12 @@ func NewTable(ddl *sqlparser.DDL) (*Table, error) {
 	t := newEmtpyTable(nn.Name.String())
 	t.rowMetas = ms
 	return t, nil
+}
+
+func NewTableFromChangeSet(cs *structs.CreateTableChangeSet) *Table {
+	t := newEmtpyTable(cs.Name)
+	t.rowMetas = cs.RowMetas
+	return t
 }
 
 func newEmtpyTable(name string) *Table {
@@ -181,36 +187,44 @@ func (t *Table) containsColumn(colName string) bool {
 	return false
 }
 
-func (t *Table) Insert(q *sqlparser.Insert) error {
-	insertRows, ok := sqlparser.SQLNode(q.Rows).(sqlparser.Values)
-	if !ok {
-		panic("unexpected behavior: sqlparser.Insert is not Values")
+func (t *Table) CreateInsertChangeSets(q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
+	switch rows := q.Rows.(type) {
+	case sqlparser.Values:
+		cs, err := t.makeInsertChangeSet(q.Columns, rows)
+		if err != nil {
+			return nil, err
+		}
+		return cs, nil
+	default:
+		return nil, errors.Errorf("Not supported Row types: %s", rows)
 	}
+}
 
+func (t *Table) makeInsertChangeSet(iColumns sqlparser.Columns, values sqlparser.Values) ([]*structs.InsertChangeSet, error) {
 	columns := map[string]*structs.RowMeta{}
 	for _, c := range t.rowMetas {
 		columns[c.Name] = c
 	}
 
-	var rows []*Row
+	var css []*structs.InsertChangeSet
 	lastAutoIncVals := map[string]int64{}
 
-	for _, rowValues := range insertRows {
+	for _, rowValues := range values {
 		data := map[string]string{}
 		for i, rowVal := range rowValues {
 			val, ok := rowVal.(*sqlparser.SQLVal)
 			if !ok {
-				panic("unexpected behavior: sqlparser.Values is not SQLVal")
+				return nil, errors.New("unexpected behavior: sqlparser.Values is not SQLVal")
 			}
-			cName := q.Columns[i].String()
+			cName := iColumns[i].String()
 			if _, ok := columns[cName]; !ok {
-				return errors.Errorf("Invalid column: %s\n", cName)
+				return nil, errors.Errorf("Invalid column: %s\n", cName)
 			}
-			data[q.Columns[i].String()] = string(val.Val)
+			data[iColumns[i].String()] = string(val.Val)
 		}
 
 		for _, c := range columns {
-			if _, ok = data[c.Name]; ok {
+			if _, ok := data[c.Name]; ok {
 				continue
 			}
 			if c.ColumnType == types.AutoIncrementInt {
@@ -232,19 +246,29 @@ func (t *Table) Insert(q *sqlparser.Insert) error {
 				lastAutoIncVals[c.Name] = v
 			}
 		}
-		r := &Row{columns: data}
-		rows = append(rows, r)
+		r := &structs.InsertChangeSet{
+			TableName: t.Name,
+			Columns:   data,
+		}
+		css = append(css, r)
 	}
 
-	t.rows = append(t.rows, rows...)
+	return css, nil
+}
 
+func (t *Table) ApplyInsertChangeSets(css []*structs.InsertChangeSet) error {
+	var rows []*Row
+	for _, cs := range css {
+		rows = append(rows, &Row{columns: cs.Columns})
+	}
+	t.rows = append(t.rows, rows...)
 	return nil
 }
 
-func (t *Table) Update(q *sqlparser.Update) error {
+func (t *Table) CreateUpdateChangeSets(q *sqlparser.Update) ([]*structs.UpdateChangeSet, error) {
 	rows, err := t.selectWhere(q.Where)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	cols := map[string]string{}
@@ -254,15 +278,41 @@ func (t *Table) Update(q *sqlparser.Update) error {
 		case *sqlparser.SQLVal:
 			cols[colName] = string(qExpr.Val)
 		default:
-			return errors.Errorf("not supported expression")
+			return nil, errors.Errorf("not supported expression")
 		}
 	}
+
+	var css []*structs.UpdateChangeSet
 
 	for _, row := range rows {
-		for col, newVal := range cols {
-			row.Update(col, newVal)
+		cs := &structs.UpdateChangeSet{
+			TableName:    t.Name,
+			PrimaryKeyId: row.GetPrimaryId(),
+			Columns:      cols,
 		}
+		css = append(css, cs)
 	}
 
+	return css, nil
+}
+
+func (t *Table) ApplyUpdateChangeSets(css []*structs.UpdateChangeSet) error {
+	// TODO: O(N*M)
+	for _, cs := range css {
+		found := false
+		for _, r := range t.rows {
+			if r.GetPrimaryId() == cs.PrimaryKeyId {
+				for col, newVal := range cs.Columns {
+					r.Update(col, newVal)
+				}
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return errors.Errorf("no row found for UPDATE: %s.%s(PK: %d)", cs.DBName, cs.TableName, cs.PrimaryKeyId)
+		}
+	}
 	return nil
 }

@@ -17,7 +17,7 @@ type Server struct {
 }
 
 func NewServer() (*Server, error) {
-	w, err := wal.NewWal("/tmp")
+	w, err := wal.NewWal("./log")
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,16 @@ func (s *Server) RecoverFromWal(start int) error {
 
 		switch c := cs.(type) {
 		case *structs.CreateDBChangeSet:
-			err = s.CreateDatabaseFromChangeSet(c)
+			err = s.applyCreateDBChangeSet(c)
+		case *structs.CreateTableChangeSet:
+			db := s.databases[c.DBName]
+			err = db.ApplyCreateTableChangeSet(c)
+		case *structs.InsertChangeSet:
+			db := s.databases[c.DBName]
+			err = db.ApplyInsertChangeSets([]*structs.InsertChangeSet{c})
+		case *structs.UpdateChangeSet:
+			db := s.databases[c.DBName]
+			err = db.ApplyUpdateChangeSets([]*structs.UpdateChangeSet{c})
 		default:
 			return errors.Errorf("Not supported ChangeSet: %s", c)
 		}
@@ -58,6 +67,8 @@ func (s *Server) RecoverFromWal(start int) error {
 		}
 	}
 
+	s.wal.ProceedLsn(len(css))
+
 	return nil
 }
 
@@ -65,12 +76,11 @@ func (s *Server) Query(sql string) *structs.Result {
 	result := structs.NewEmptyResult()
 	stmt, err := sqlparser.ParseStrictDDL(sql)
 	if err != nil {
-		log.Error().Msg("Invalid sql: " + sql)
+		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid sql")
 		return result
 	}
 	fmt.Printf("sql: %s\n", sql)
 
-	var cs structs.ChangeSet
 	switch t := stmt.(type) {
 	case *sqlparser.Select:
 		result, err = s.selectTable(t)
@@ -79,7 +89,7 @@ func (s *Server) Query(sql string) *structs.Result {
 	case *sqlparser.Update:
 		err = s.update(t)
 	case *sqlparser.DBDDL:
-		cs, err = s.runDBDDL(t)
+		err = s.runDBDDL(t)
 	case *sqlparser.DDL:
 		err = s.runDDL(t)
 	default:
@@ -87,63 +97,49 @@ func (s *Server) Query(sql string) *structs.Result {
 	}
 
 	if err != nil {
-		log.Log().Stack().Err(err).Msg("Invalid query")
+		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid query")
 		fmt.Printf("error: %+v\n", err)
 
 		result = structs.NewEmptyResult()
 	}
 
-	if cs != nil {
-		err = s.wal.Write(cs)
-		if err != nil {
-			// TODO: undo
-			panic(err)
-		}
-	}
-
 	return result
 }
 
-func (s *Server) runDBDDL(t *sqlparser.DBDDL) (structs.ChangeSet, error) {
+func (s *Server) runDBDDL(t *sqlparser.DBDDL) error {
 	if t.Action == sqlparser.CreateStr {
 		return s.createDatabase(t)
 	} else {
-		return nil, errors.Errorf("not defined statement: %s", t.Action)
+		return errors.Errorf("not defined statement: %s", t.Action)
 	}
 }
 
-func (s *Server) createDatabase(dbddl *sqlparser.DBDDL) (structs.ChangeSet, error) {
+func (s *Server) createDatabase(dbddl *sqlparser.DBDDL) error {
 	name := dbddl.DBName
 	if _, ok := s.databases[name]; ok {
 		if dbddl.IfExists {
-			return nil, nil
+			return nil
 		} else {
-			return nil, errors.Errorf("database already exists: %s", name)
+			return errors.Errorf("database already exists: %s", name)
 		}
 	}
 
-	db, err := data.NewDatabase(dbddl)
+	cs := &structs.CreateDBChangeSet{Name: name}
+	err := s.wal.Write(cs)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	s.addDatabase(db)
-	cs := &structs.CreateDBChangeSet{Name: db.Name}
-	return cs, nil
+	return s.applyCreateDBChangeSet(cs)
 }
 
-func (s *Server) CreateDatabaseFromChangeSet(cs *structs.CreateDBChangeSet) error {
+func (s *Server) applyCreateDBChangeSet(cs *structs.CreateDBChangeSet) error {
 	db, err := data.NewDatabaseFromChangeSet(cs)
 	if err != nil {
 		return err
 	}
 
-	s.addDatabase(db)
-	return nil
-}
-
-func (s *Server) addDatabase(db *data.Database) {
 	s.databases[db.Name] = db
+	return nil
 }
 
 func (s *Server) runDDL(ddl *sqlparser.DDL) error {
@@ -153,7 +149,16 @@ func (s *Server) runDDL(ddl *sqlparser.DDL) error {
 	}
 
 	if ddl.Action == sqlparser.CreateStr {
-		return db.CreateTable(ddl)
+		cs, err := db.MakeCreateTableChangeSet(ddl)
+		if err != nil {
+			return err
+		}
+
+		err = s.wal.Write(cs)
+		if err != nil {
+			return err
+		}
+		return db.ApplyCreateTableChangeSet(cs)
 	} else {
 		return errors.Errorf("Not supported query: %s", ddl.Action)
 	}
@@ -183,7 +188,20 @@ func (s *Server) insert(q *sqlparser.Insert) error {
 	if !ok {
 		return errors.Errorf("Database doesn't exist: %s", q.Table.Qualifier.String())
 	}
-	return db.Insert(q)
+	css, err := db.CreateInsertChangeSets(q)
+	if err != nil {
+		return err
+	}
+
+	var css2 []structs.ChangeSet
+	for _, cs := range css {
+		css2 = append(css2, cs)
+	}
+	err = s.wal.WriteSlice(css2)
+	if err != nil {
+		return err
+	}
+	return db.ApplyInsertChangeSets(css)
 }
 
 func (s *Server) update(q *sqlparser.Update) error {
@@ -202,11 +220,28 @@ func (s *Server) update(q *sqlparser.Update) error {
 			if !ok {
 				return errors.Errorf("Database doesn't exist: %s", dbName)
 			}
-			return db.Update(q, tName)
+			return s.updateTable(q, db, tName)
 		default:
 			return errors.Errorf("Not allowed expression: %s", e)
 		}
 	default:
 		return errors.Errorf("Not allowed expression: %s", e)
 	}
+}
+
+func (s *Server) updateTable(q *sqlparser.Update, db *data.Database, tName string) error {
+	css, err := db.CreateUpdateChangeSets(q, tName)
+	if err != nil {
+		return err
+	}
+
+	var css2 []structs.ChangeSet
+	for _, cs := range css {
+		css2 = append(css2, cs)
+	}
+	err = s.wal.WriteSlice(css2)
+	if err != nil {
+		return err
+	}
+	return db.ApplyUpdateChangeSets(css)
 }
