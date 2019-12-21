@@ -39,8 +39,8 @@ func main() {
 			die(err)
 		}
 		s.Inspect()
-		fmt.Println("<==========RECOVERY: Wal")
 
+		fmt.Println("<==========RECOVERY: Wal")
 		err = s.RecoverFromWal()
 		if err != nil {
 			die(err)
@@ -49,9 +49,6 @@ func main() {
 	}
 
 	res := s.Query("SELECT * FROM hello.world")
-	res.Inspect()
-	// s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
-	res = s.Query("SELECT * FROM hello.world")
 	res.Inspect()
 	res = s.Query("SELECT message FROM hello.world")
 	res.Inspect()
