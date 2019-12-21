@@ -43,15 +43,6 @@ func main() {
 	res.Inspect()
 
 	s.Inspect()
-
-	/* TODO:
-	* Persist to Disk (Wal and Snapshot)
-	* Transaction
-	* Join
-	* Index
-	* Replication
-	* Persist (Distribution, multiple write in one transaction)
-	 */
 }
 
 func create(s *server.Server) {
