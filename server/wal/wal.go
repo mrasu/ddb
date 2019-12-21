@@ -34,6 +34,10 @@ func NewWal(dir string) (*Wal, error) {
 	}, nil
 }
 
+func (w *Wal) CurrentLsn() int {
+	return w.lsn
+}
+
 func (w *Wal) Write(cs structs.ChangeSet) error {
 	bs, err := cs.ToWalFormat(w.lsn)
 	if err != nil {
@@ -69,13 +73,17 @@ func (w *Wal) writeFile(bs []byte) error {
 
 	_, err = file.Write(bs)
 	if err != nil {
-		return errors.Wrap(err, "failed to open file")
+		return errors.Wrap(err, "failed to write file")
 	}
 	return nil
 }
 
 func (w *Wal) ProceedLsn(p int) {
 	w.lsn += p
+}
+
+func (w *Wal) SetLsn(l int) {
+	w.lsn = l
 }
 
 func (w *Wal) fileName() string {

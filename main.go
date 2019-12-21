@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 
 	"github.com/mrasu/ddb/server"
 	"github.com/rs/zerolog"
@@ -17,19 +18,34 @@ func main() {
 		die(err)
 	}
 
-	wal, err := ioutil.ReadFile("log/wal_0.log")
+	_, err = ioutil.ReadFile("log/wal_0.log")
+	exists := false
 	if err != nil {
-		die(err)
+		if !os.IsNotExist(err) {
+			die(err)
+		}
+	} else {
+		exists = true
 	}
-	if len(wal) < 1 {
+
+	if !exists {
 		fmt.Println("<==========CREATE")
 		create(s)
 	} else {
-		fmt.Println("<==========RecoverFromWal")
-		err = s.RecoverFromWal(0)
+		fmt.Println("<==========RECOVERY: Snapshot")
+
+		err = s.RecoverSnapshot()
 		if err != nil {
 			die(err)
 		}
+		s.Inspect()
+		fmt.Println("<==========RECOVERY: Wal")
+
+		err = s.RecoverFromWal()
+		if err != nil {
+			die(err)
+		}
+		s.Inspect()
 	}
 
 	res := s.Query("SELECT * FROM hello.world")
@@ -51,6 +67,11 @@ func create(s *server.Server) {
 	s.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
 
 	s.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar')")
+
+	err := s.TakeSnapshot()
+	if err != nil {
+		die(err)
+	}
 	s.Query("INSERT INTO hello.world(message) VALUES ('baz')")
 	s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
 }

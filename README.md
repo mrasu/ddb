@@ -1,7 +1,10 @@
 Dumb RDBMS for my study
 
-# TODO
+# Done
+* CREATE DATABASE, CREATE TABLE, INSERT, UPDATE, SELECT
 * Persist to Disk (Wal and Snapshot)
+
+# TODO
 * Test
 * Transaction
 * Multiple process (goroutine)

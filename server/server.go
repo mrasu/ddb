@@ -29,18 +29,19 @@ func NewServer() (*Server, error) {
 }
 
 func (s *Server) Inspect() {
-	fmt.Println("===== Server inspection =====")
+	fmt.Println("<==========Server inspection")
 	for _, db := range s.databases {
 		db.Inspect()
 	}
 }
 
-func (s *Server) RecoverFromWal(start int) error {
+func (s *Server) RecoverFromWal() error {
 	css, err := s.wal.Read()
 	if err != nil {
 		return err
 	}
 
+	start := s.wal.CurrentLsn()
 	for _, cs := range css {
 		if cs.GetLsn() < start {
 			continue
@@ -244,4 +245,36 @@ func (s *Server) updateTable(q *sqlparser.Update, db *data.Database, tName strin
 		return err
 	}
 	return db.ApplyUpdateChangeSets(css)
+}
+
+func (s *Server) TakeSnapshot() error {
+	lsn := s.wal.CurrentLsn()
+	var dbs []*data.Database
+	for _, db := range s.databases {
+		dbs = append(dbs, db)
+	}
+	ss := data.TakeSnapshot(lsn, dbs)
+
+	err := ss.Save("log")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) RecoverSnapshot() error {
+	ss, err := data.RecoverSnapshot("log")
+	if err != nil {
+		return err
+	}
+
+	dbs := ss.ToDatabases()
+
+	databases := map[string]*data.Database{}
+	for _, db := range dbs {
+		databases[db.Name] = db
+	}
+	s.databases = databases
+	s.wal.SetLsn(ss.Lsn())
+	return nil
 }

@@ -21,7 +21,7 @@ func NewEmptyResult() *Result {
 }
 
 func (r *Result) Inspect() {
-	fmt.Println("*********")
+	fmt.Println("<==========Inspect")
 	for i, val := range r.Values {
 		fmt.Printf("==== %d ====\n", i)
 
