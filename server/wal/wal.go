@@ -15,11 +15,12 @@ import (
 
 type Wal struct {
 	dir        string
+	prefix     string
 	fileNumber int
 	lsn        int
 }
 
-func NewWal(dir string) (*Wal, error) {
+func NewWal(dir, prefix string) (*Wal, error) {
 	if _, err := os.Stat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, errors.Errorf("Directory not found: %s", dir)
@@ -29,6 +30,7 @@ func NewWal(dir string) (*Wal, error) {
 
 	return &Wal{
 		dir:        dir,
+		prefix:     prefix,
 		fileNumber: 0,
 		lsn:        0,
 	}, nil
@@ -36,6 +38,25 @@ func NewWal(dir string) (*Wal, error) {
 
 func (w *Wal) CurrentLsn() int {
 	return w.lsn
+}
+
+func (w *Wal) Exists() (bool, error) {
+	data, err := ioutil.ReadFile(w.fileName())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+		return false, nil
+	} else {
+		if len(data) <= 0 {
+			return false, nil
+		}
+		return true, nil
+	}
+}
+
+func (w *Wal) Remove() {
+	_ = os.Remove(w.fileName())
 }
 
 func (w *Wal) Write(cs structs.ChangeSet) error {
@@ -69,7 +90,6 @@ func (w *Wal) writeFile(bs []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to open file")
 	}
-	fmt.Println(file)
 
 	_, err = file.Write(bs)
 	if err != nil {
@@ -87,7 +107,7 @@ func (w *Wal) SetLsn(l int) {
 }
 
 func (w *Wal) fileName() string {
-	return w.dir + "/wal_" + strconv.Itoa(w.fileNumber) + ".log"
+	return w.dir + "/" + w.prefix + strconv.Itoa(w.fileNumber) + ".log"
 }
 
 func (w *Wal) Read() ([]structs.ChangeSet, error) {

@@ -89,10 +89,10 @@ func newEmtpyTable(name string) *Table {
 	}
 }
 
-func (t *Table) Select(q *sqlparser.Select) (*structs.Result, error) {
+func (t *Table) Select(trx *Transaction, q *sqlparser.Select) (*structs.Result, error) {
 	rows := t.rows
 	if q.Where != nil {
-		scopedRows, err := t.selectWhere(q.Where)
+		scopedRows, err := t.selectWhere(trx, q.Where)
 		if err != nil {
 			return nil, err
 		}
@@ -123,7 +123,7 @@ func (t *Table) Select(q *sqlparser.Select) (*structs.Result, error) {
 		var val []string
 
 		for _, c := range columns {
-			val = append(val, r.Get(c))
+			val = append(val, r.Get(trx, c))
 		}
 		values = append(values, val)
 	}
@@ -131,7 +131,7 @@ func (t *Table) Select(q *sqlparser.Select) (*structs.Result, error) {
 	return structs.NewResult(columns, values), nil
 }
 
-func (t *Table) selectWhere(w *sqlparser.Where) ([]*Row, error) {
+func (t *Table) selectWhere(trx *Transaction, w *sqlparser.Where) ([]*Row, error) {
 	if w.Type != sqlparser.WhereStr {
 		panic("unexpected behavior: WHERE clause holds HAVING")
 	}
@@ -170,7 +170,7 @@ func (t *Table) selectWhere(w *sqlparser.Where) ([]*Row, error) {
 
 	var rows []*Row
 	for _, r := range t.rows {
-		if r.Get(column) == restriction {
+		if r.Get(trx, column) == restriction {
 			rows = append(rows, r)
 		}
 	}
@@ -187,10 +187,10 @@ func (t *Table) containsColumn(colName string) bool {
 	return false
 }
 
-func (t *Table) CreateInsertChangeSets(q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
+func (t *Table) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
 	switch rows := q.Rows.(type) {
 	case sqlparser.Values:
-		cs, err := t.makeInsertChangeSet(q.Columns, rows)
+		cs, err := t.makeInsertChangeSet(trx, q.Columns, rows)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +200,7 @@ func (t *Table) CreateInsertChangeSets(q *sqlparser.Insert) ([]*structs.InsertCh
 	}
 }
 
-func (t *Table) makeInsertChangeSet(iColumns sqlparser.Columns, values sqlparser.Values) ([]*structs.InsertChangeSet, error) {
+func (t *Table) makeInsertChangeSet(trx *Transaction, iColumns sqlparser.Columns, values sqlparser.Values) ([]*structs.InsertChangeSet, error) {
 	columns := map[string]*structs.RowMeta{}
 	for _, c := range t.rowMetas {
 		columns[c.Name] = c
@@ -233,7 +233,7 @@ func (t *Table) makeInsertChangeSet(iColumns sqlparser.Columns, values sqlparser
 					v = val + 1
 				} else {
 					if len(t.rows) != 0 {
-						lastV, err := strconv.Atoi(t.rows[len(t.rows)-1].Get(c.Name))
+						lastV, err := strconv.Atoi(t.rows[len(t.rows)-1].Get(trx, c.Name))
 						if err != nil {
 							panic("unexpected behavior: int column holds a not int value")
 						}
@@ -247,8 +247,9 @@ func (t *Table) makeInsertChangeSet(iColumns sqlparser.Columns, values sqlparser
 			}
 		}
 		r := &structs.InsertChangeSet{
-			TableName: t.Name,
-			Columns:   data,
+			TableName:         t.Name,
+			Columns:           data,
+			TransactionNumber: trx.Number,
 		}
 		css = append(css, r)
 	}
@@ -256,17 +257,19 @@ func (t *Table) makeInsertChangeSet(iColumns sqlparser.Columns, values sqlparser
 	return css, nil
 }
 
-func (t *Table) ApplyInsertChangeSets(css []*structs.InsertChangeSet) error {
+func (t *Table) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertChangeSet) error {
 	var rows []*Row
 	for _, cs := range css {
-		rows = append(rows, &Row{columns: cs.Columns})
+		r := CreateRow(trx, t, cs.Columns)
+		rows = append(rows, r)
 	}
+
 	t.rows = append(t.rows, rows...)
 	return nil
 }
 
-func (t *Table) CreateUpdateChangeSets(q *sqlparser.Update) ([]*structs.UpdateChangeSet, error) {
-	rows, err := t.selectWhere(q.Where)
+func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([]*structs.UpdateChangeSet, error) {
+	rows, err := t.selectWhere(trx, q.Where)
 	if err != nil {
 		return nil, err
 	}
@@ -287,8 +290,10 @@ func (t *Table) CreateUpdateChangeSets(q *sqlparser.Update) ([]*structs.UpdateCh
 	for _, row := range rows {
 		cs := &structs.UpdateChangeSet{
 			TableName:    t.Name,
-			PrimaryKeyId: row.GetPrimaryId(),
+			PrimaryKeyId: row.GetPrimaryId(trx),
 			Columns:      cols,
+
+			TransactionNumber: trx.Number,
 		}
 		css = append(css, cs)
 	}
@@ -296,14 +301,14 @@ func (t *Table) CreateUpdateChangeSets(q *sqlparser.Update) ([]*structs.UpdateCh
 	return css, nil
 }
 
-func (t *Table) ApplyUpdateChangeSets(css []*structs.UpdateChangeSet) error {
+func (t *Table) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateChangeSet) error {
 	// TODO: O(N*M)
 	for _, cs := range css {
 		found := false
 		for _, r := range t.rows {
-			if r.GetPrimaryId() == cs.PrimaryKeyId {
+			if r.GetPrimaryId(trx) == cs.PrimaryKeyId {
 				for col, newVal := range cs.Columns {
-					r.Update(col, newVal)
+					r.Update(trx, col, newVal)
 				}
 				found = true
 				break
@@ -315,4 +320,14 @@ func (t *Table) ApplyUpdateChangeSets(css []*structs.UpdateChangeSet) error {
 		}
 	}
 	return nil
+}
+
+func (t *Table) remove(target *Row) {
+	// TODO: optimise
+	for i, r := range t.rows {
+		if r == target {
+			t.rows = append(t.rows[:i], t.rows[i+1:]...)
+			return
+		}
+	}
 }

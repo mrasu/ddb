@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
 
 	"github.com/mrasu/ddb/server"
 	"github.com/rs/zerolog"
@@ -18,14 +16,9 @@ func main() {
 		die(err)
 	}
 
-	_, err = ioutil.ReadFile("log/wal_0.log")
-	exists := false
+	exists, err := s.WalExists()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			die(err)
-		}
-	} else {
-		exists = true
+		die(err)
 	}
 
 	if !exists {
@@ -48,29 +41,51 @@ func main() {
 		s.Inspect()
 	}
 
-	res := s.Query("SELECT * FROM hello.world")
+	err = s.UseTemporalWal()
+	if err != nil {
+		die(err)
+	}
+
+	c := s.StartNewConnection()
+	c.Query("BEGIN")
+	c.Query("INSERT INTO hello.world(message) VALUES ('phantom1')")
+	c.Query("INSERT INTO hello.world(message) VALUES ('phantom2')")
+	c.Query("INSERT INTO hello.world(message) VALUES ('phantom3')")
+	res := c.Query("/*phantom: before commit*/ SELECT * FROM hello.world")
 	res.Inspect()
-	res = s.Query("SELECT message FROM hello.world")
+	c.Query("ROLLBACK")
+
+	c.Query("BEGIN")
+	c.Query("INSERT INTO hello.world(message) VALUES ('real')")
+	res = c.Query("/*real: before commit*/ SELECT * FROM hello.world")
 	res.Inspect()
-	res = s.Query("SELECT message FROM hello.world WHERE id = 1")
+	c.Query("COMMIT")
+
+	c = s.StartNewConnection()
+	res = c.Query("SELECT * FROM hello.world")
 	res.Inspect()
+	// res = c.Query("SELECT message FROM hello.world")
+	// res.Inspect()
+	// res = c.Query("SELECT message FROM hello.world WHERE id = 1")
+	// res.Inspect()
 
 	s.Inspect()
 }
 
 func create(s *server.Server) {
-	s.Query("CREATE DATABASE hello")
+	c := s.StartNewConnection()
+	c.Query("CREATE DATABASE hello")
 	// s.Query("CREATE DATABASE hello")
-	s.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
+	c.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
 
-	s.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar')")
+	c.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar')")
 
 	err := s.TakeSnapshot()
 	if err != nil {
 		die(err)
 	}
-	s.Query("INSERT INTO hello.world(message) VALUES ('baz')")
-	s.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
+	c.Query("INSERT INTO hello.world(message) VALUES ('baz')")
+	c.Query("UPDATE hello.world SET message = 'bar bar' WHERE id = 2")
 }
 
 func die(err error) {

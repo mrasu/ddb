@@ -12,6 +12,10 @@ const (
 	CreateTable = 100
 	Insert      = 200
 	Update      = 210
+
+	Begin    = 900
+	Commit   = 910
+	Rollback = 920
 )
 
 var NewLineBytes = []byte("\n")
@@ -62,6 +66,24 @@ func (cs *UpdateChangeSet) ToWalFormat(lsn int) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Update)
 }
 
+func (cs *BeginChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
+func (cs *BeginChangeSet) GetLsn() int    { return cs.Lsn }
+func (cs *BeginChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+	return cs.toWalFormatWith(lsn, cs, Begin)
+}
+
+func (cs *CommitChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
+func (cs *CommitChangeSet) GetLsn() int    { return cs.Lsn }
+func (cs *CommitChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+	return cs.toWalFormatWith(lsn, cs, Commit)
+}
+
+func (cs *RollbackChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
+func (cs *RollbackChangeSet) GetLsn() int    { return cs.Lsn }
+func (cs *RollbackChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+	return cs.toWalFormatWith(lsn, cs, Rollback)
+}
+
 type CreateDBChangeSet struct {
 	*AWalFormat
 	Lsn  int    `json:"lsn"`
@@ -82,6 +104,8 @@ type InsertChangeSet struct {
 	DBName    string            `json:"db_name"`
 	TableName string            `json:"table_name"`
 	Columns   map[string]string `json:"columns"`
+
+	TransactionNumber int `json:"trx_num"`
 }
 
 type UpdateChangeSet struct {
@@ -91,4 +115,24 @@ type UpdateChangeSet struct {
 	TableName    string            `json:"table_name"`
 	PrimaryKeyId int64             `json:"pk_id"`
 	Columns      map[string]string `json:"columns"`
+
+	TransactionNumber int `json:"trx_num"`
+}
+
+type BeginChangeSet struct {
+	*AWalFormat
+	Lsn    int `json:"lsn"`
+	Number int `json:"trx_num"`
+}
+
+type RollbackChangeSet struct {
+	*AWalFormat
+	Lsn    int `json:"lsn"`
+	Number int `json:"trx_num"`
+}
+
+type CommitChangeSet struct {
+	*AWalFormat
+	Lsn    int `json:"lsn"`
+	Number int `json:"trx_num"`
 }

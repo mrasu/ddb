@@ -3,21 +3,24 @@ package server
 import (
 	"fmt"
 
-	"github.com/mrasu/ddb/server/data"
-	"github.com/mrasu/ddb/server/structs"
-	"github.com/mrasu/ddb/server/wal"
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"github.com/xwb1989/sqlparser"
+
+	"github.com/mrasu/ddb/server/structs"
+	"github.com/pkg/errors"
+
+	"github.com/mrasu/ddb/server/data"
+	"github.com/mrasu/ddb/server/wal"
 )
 
 type Server struct {
 	databases map[string]*data.Database
 	wal       *wal.Wal
+
+	transactionHolder *data.TransactionHolder
 }
 
 func NewServer() (*Server, error) {
-	w, err := wal.NewWal("./log")
+	w, err := wal.NewWal("./log", "wal_")
 	if err != nil {
 		return nil, err
 	}
@@ -25,6 +28,8 @@ func NewServer() (*Server, error) {
 	return &Server{
 		databases: map[string]*data.Database{},
 		wal:       w,
+
+		transactionHolder: data.NewHolder(),
 	}, nil
 }
 
@@ -33,6 +38,28 @@ func (s *Server) Inspect() {
 	for _, db := range s.databases {
 		db.Inspect()
 	}
+}
+
+func (s *Server) StartNewConnection() *Connection {
+	return newConnection(s)
+}
+
+func (s *Server) WalExists() (bool, error) {
+	return s.wal.Exists()
+}
+
+func (s *Server) UseTemporalWal() error {
+	w, err := wal.NewWal("./log", "wal_tmp_")
+	if err != nil {
+		return err
+	}
+	w.Remove()
+	s.wal = w
+	return nil
+}
+
+func (s *Server) addDatabase(db *data.Database) {
+	s.databases[db.Name] = db
 }
 
 func (s *Server) RecoverFromWal() error {
@@ -55,10 +82,18 @@ func (s *Server) RecoverFromWal() error {
 			err = db.ApplyCreateTableChangeSet(c)
 		case *structs.InsertChangeSet:
 			db := s.databases[c.DBName]
-			err = db.ApplyInsertChangeSets([]*structs.InsertChangeSet{c})
+			trx := s.transactionHolder.Get(c.TransactionNumber)
+			if trx == nil {
+				err = errors.Errorf("found not started transaction: %d", c.TransactionNumber)
+			}
+			err = db.ApplyInsertChangeSets(trx, []*structs.InsertChangeSet{c})
 		case *structs.UpdateChangeSet:
 			db := s.databases[c.DBName]
-			err = db.ApplyUpdateChangeSets([]*structs.UpdateChangeSet{c})
+			trx := s.transactionHolder.Get(c.TransactionNumber)
+			if trx == nil {
+				err = errors.Errorf("found not started transaction: %d", c.TransactionNumber)
+			}
+			err = db.ApplyUpdateChangeSets(trx, []*structs.UpdateChangeSet{c})
 		default:
 			return errors.Errorf("Not supported ChangeSet: %s", c)
 		}
@@ -73,38 +108,14 @@ func (s *Server) RecoverFromWal() error {
 	return nil
 }
 
-func (s *Server) Query(sql string) *structs.Result {
-	result := structs.NewEmptyResult()
-	stmt, err := sqlparser.ParseStrictDDL(sql)
+func (s *Server) applyCreateDBChangeSet(cs *structs.CreateDBChangeSet) error {
+	db, err := data.NewDatabaseFromChangeSet(cs)
 	if err != nil {
-		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid sql")
-		return result
-	}
-	fmt.Printf("sql: %s\n", sql)
-
-	switch t := stmt.(type) {
-	case *sqlparser.Select:
-		result, err = s.selectTable(t)
-	case *sqlparser.Insert:
-		err = s.insert(t)
-	case *sqlparser.Update:
-		err = s.update(t)
-	case *sqlparser.DBDDL:
-		err = s.runDBDDL(t)
-	case *sqlparser.DDL:
-		err = s.runDDL(t)
-	default:
-		fmt.Println(t)
+		return err
 	}
 
-	if err != nil {
-		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid query")
-		fmt.Printf("error: %+v\n", err)
-
-		result = structs.NewEmptyResult()
-	}
-
-	return result
+	s.addDatabase(db)
+	return nil
 }
 
 func (s *Server) runDBDDL(t *sqlparser.DBDDL) error {
@@ -133,16 +144,6 @@ func (s *Server) createDatabase(dbddl *sqlparser.DBDDL) error {
 	return s.applyCreateDBChangeSet(cs)
 }
 
-func (s *Server) applyCreateDBChangeSet(cs *structs.CreateDBChangeSet) error {
-	db, err := data.NewDatabaseFromChangeSet(cs)
-	if err != nil {
-		return err
-	}
-
-	s.databases[db.Name] = db
-	return nil
-}
-
 func (s *Server) runDDL(ddl *sqlparser.DDL) error {
 	db, ok := s.databases[ddl.NewName.Qualifier.String()]
 	if !ok {
@@ -163,88 +164,6 @@ func (s *Server) runDDL(ddl *sqlparser.DDL) error {
 	} else {
 		return errors.Errorf("Not supported query: %s", ddl.Action)
 	}
-}
-
-func (s *Server) selectTable(q *sqlparser.Select) (*structs.Result, error) {
-	// Supporting only 1 table
-	tExpr, ok := q.From[0].(*sqlparser.AliasedTableExpr)
-	if !ok {
-		return nil, errors.Errorf("Not supported FROM values: %s", q.From[0])
-	}
-	table, ok := tExpr.Expr.(sqlparser.TableName)
-	if !ok {
-		return nil, errors.Errorf("Not supported FROM values: %s", q.From[0])
-	}
-
-	db, ok := s.databases[table.Qualifier.String()]
-	if !ok {
-		return nil, errors.Errorf("Database doesn't exist: %s", table.Qualifier.String())
-	}
-
-	return db.Select(q, table.Name.String())
-}
-
-func (s *Server) insert(q *sqlparser.Insert) error {
-	db, ok := s.databases[q.Table.Qualifier.String()]
-	if !ok {
-		return errors.Errorf("Database doesn't exist: %s", q.Table.Qualifier.String())
-	}
-	css, err := db.CreateInsertChangeSets(q)
-	if err != nil {
-		return err
-	}
-
-	var css2 []structs.ChangeSet
-	for _, cs := range css {
-		css2 = append(css2, cs)
-	}
-	err = s.wal.WriteSlice(css2)
-	if err != nil {
-		return err
-	}
-	return db.ApplyInsertChangeSets(css)
-}
-
-func (s *Server) update(q *sqlparser.Update) error {
-	if len(q.TableExprs) > 1 {
-		return errors.New("Update allow only one table")
-	}
-	expr := q.TableExprs[0]
-
-	switch e := expr.(type) {
-	case *sqlparser.AliasedTableExpr:
-		switch te := e.Expr.(type) {
-		case sqlparser.TableName:
-			dbName := te.Qualifier.String()
-			tName := te.Name.String()
-			db, ok := s.databases[dbName]
-			if !ok {
-				return errors.Errorf("Database doesn't exist: %s", dbName)
-			}
-			return s.updateTable(q, db, tName)
-		default:
-			return errors.Errorf("Not allowed expression: %s", e)
-		}
-	default:
-		return errors.Errorf("Not allowed expression: %s", e)
-	}
-}
-
-func (s *Server) updateTable(q *sqlparser.Update, db *data.Database, tName string) error {
-	css, err := db.CreateUpdateChangeSets(q, tName)
-	if err != nil {
-		return err
-	}
-
-	var css2 []structs.ChangeSet
-	for _, cs := range css {
-		css2 = append(css2, cs)
-	}
-	err = s.wal.WriteSlice(css2)
-	if err != nil {
-		return err
-	}
-	return db.ApplyUpdateChangeSets(css)
 }
 
 func (s *Server) TakeSnapshot() error {

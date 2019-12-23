@@ -118,13 +118,6 @@ func (ss *Snapshot) ToDatabases() []*Database {
 		tables := map[string]*Table{}
 
 		for _, st := range sdb.Tables {
-			var rows []*Row
-			for _, r := range st.Rows {
-				rows = append(rows, &Row{
-					columns: r.Columns,
-				})
-			}
-
 			indexes := map[string]*Index{}
 			for _, i := range st.Indexes {
 				indexes[i.Name] = &Index{
@@ -132,12 +125,21 @@ func (ss *Snapshot) ToDatabases() []*Database {
 				}
 			}
 
-			tables[st.Name] = &Table{
+			t := &Table{
 				Name:     st.Name,
 				rowMetas: st.RowMetas,
-				rows:     rows,
 				indexes:  indexes,
 			}
+
+			var rows []*Row
+			for _, r := range st.Rows {
+				newRow := newEmptyRow(t)
+				newRow.columns = r.Columns
+				rows = append(rows, newRow)
+			}
+			t.rows = rows
+
+			tables[st.Name] = t
 		}
 
 		dbs = append(dbs, &Database{

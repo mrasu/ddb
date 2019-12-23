@@ -2,7 +2,6 @@ package data
 
 import (
 	"fmt"
-
 	"github.com/mrasu/ddb/server/structs"
 	"github.com/pkg/errors"
 	"github.com/xwb1989/sqlparser"
@@ -56,20 +55,20 @@ func (db *Database) ApplyCreateTableChangeSet(cs *structs.CreateTableChangeSet) 
 	return nil
 }
 
-func (db *Database) Select(q *sqlparser.Select, tName string) (*structs.Result, error) {
+func (db *Database) Select(trx *Transaction, q *sqlparser.Select, tName string) (*structs.Result, error) {
 	t, err := db.getTable(tName)
 	if err != nil {
 		return nil, err
 	}
-	return t.Select(q)
+	return t.Select(trx, q)
 }
 
-func (db *Database) CreateInsertChangeSets(q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
+func (db *Database) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
 	t, err := db.getTable(q.Table.Name.String())
 	if err != nil {
 		return nil, err
 	}
-	css, err := t.CreateInsertChangeSets(q)
+	css, err := t.CreateInsertChangeSets(trx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +79,7 @@ func (db *Database) CreateInsertChangeSets(q *sqlparser.Insert) ([]*structs.Inse
 	return css, err
 }
 
-func (db *Database) ApplyInsertChangeSets(css []*structs.InsertChangeSet) error {
+func (db *Database) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertChangeSet) error {
 	if len(css) == 0 {
 		return nil
 	}
@@ -96,16 +95,16 @@ func (db *Database) ApplyInsertChangeSets(css []*structs.InsertChangeSet) error 
 		return errors.Errorf("table doesn't exist: %s", tName)
 	}
 
-	return t.ApplyInsertChangeSets(css)
+	return t.ApplyInsertChangeSets(trx, css)
 }
 
-func (db *Database) CreateUpdateChangeSets(q *sqlparser.Update, tName string) ([]*structs.UpdateChangeSet, error) {
+func (db *Database) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update, tName string) ([]*structs.UpdateChangeSet, error) {
 	t, err := db.getTable(tName)
 	if err != nil {
 		return nil, err
 	}
 
-	css, err := t.CreateUpdateChangeSets(q)
+	css, err := t.CreateUpdateChangeSets(trx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +115,7 @@ func (db *Database) CreateUpdateChangeSets(q *sqlparser.Update, tName string) ([
 	return css, nil
 }
 
-func (db *Database) ApplyUpdateChangeSets(css []*structs.UpdateChangeSet) error {
+func (db *Database) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateChangeSet) error {
 	if len(css) == 0 {
 		return nil
 	}
@@ -132,7 +131,7 @@ func (db *Database) ApplyUpdateChangeSets(css []*structs.UpdateChangeSet) error 
 	if err != nil {
 		return err
 	}
-	return t.ApplyUpdateChangeSets(css)
+	return t.ApplyUpdateChangeSets(trx, css)
 }
 
 func (db *Database) getTable(tName string) (*Table, error) {
