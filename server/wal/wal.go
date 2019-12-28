@@ -149,6 +149,14 @@ func (w *Wal) Read() ([]structs.ChangeSet, error) {
 			cs = &structs.InsertChangeSet{}
 		case structs.Update:
 			cs = &structs.UpdateChangeSet{}
+		case structs.Begin:
+			cs = &structs.BeginChangeSet{}
+		case structs.Commit:
+			cs = &structs.CommitChangeSet{}
+		case structs.Rollback:
+			cs = &structs.RollbackChangeSet{}
+		case structs.Abort:
+			cs = &structs.AbortChangeSet{}
 		default:
 			return nil, errors.Errorf("Invalid WAL number: %s", line)
 		}

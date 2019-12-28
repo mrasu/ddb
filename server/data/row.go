@@ -10,6 +10,9 @@ type Row struct {
 	table               *Table
 	columns             map[string]string
 	changedTransactions map[*Transaction]bool
+
+	isCommittedRow bool
+	version        int
 }
 
 // TODO: dynamic name
@@ -20,6 +23,9 @@ func newEmptyRow(table *Table) *Row {
 		table:               table,
 		columns:             map[string]string{},
 		changedTransactions: map[*Transaction]bool{},
+
+		version:        0,
+		isCommittedRow: true,
 	}
 }
 
@@ -45,6 +51,10 @@ func (r *Row) Inspect() {
 }
 
 func (r *Row) Get(trx *Transaction, name string) string {
+	// No need to lock here to get version because transaction will be aborted when version is changed
+	cv := r.version
+	trx.addUsedRow(r, cv)
+
 	if _, ok := r.changedTransactions[trx]; ok {
 		touchedRow := trx.getTouchedRow(r)
 		return touchedRow.columns[name]
@@ -75,6 +85,7 @@ func (r *Row) ensureTouchedRow(trx *Transaction, t *Table) *Row {
 		}
 
 		touchedRow = newEmptyRow(t)
+		touchedRow.isCommittedRow = false
 		touchedRow.columns = c
 		trx.addTouchedRow(r, touchedRow)
 	}
@@ -82,28 +93,41 @@ func (r *Row) ensureTouchedRow(trx *Transaction, t *Table) *Row {
 	return touchedRow
 }
 
-func (r *Row) Update(trx *Transaction, name, value string) {
+func (r *Row) Update(trx *Transaction, values map[string]string) error {
 	if trx.isImmediate() {
-		r.update(name, value)
-		return
+		err := trx.expandLock()
+		if err != nil {
+			return err
+		}
+		defer trx.shrinkLock()
+		r.update(trx, values)
+		return nil
 	}
 
 	touchedRow := r.ensureTouchedRow(trx, r.table)
-	touchedRow.update(name, value)
+	touchedRow.update(trx, values)
+	return nil
 }
 
-func (r *Row) update(name, value string) {
-	r.columns[name] = value
+func (r *Row) update(trx *Transaction, values map[string]string) {
+	if r.isCommittedRow == true {
+		if r.version != trx.usedRows[r] {
+			panic("row version mismatch")
+		}
+	}
+
+	for name, value := range values {
+		r.columns[name] = value
+	}
+	r.version += 1
 }
 
-func (r *Row) applyTouchedRow(trx *Transaction, touchedRow *Row) {
+func (r *Row) commitTouchedRow(trx *Transaction, touchedRow *Row) {
 	if r.GetPrimaryId(trx) != touchedRow.GetPrimaryId(trx) {
 		panic("row has invalid touchedRow")
 	}
 
-	for name, value := range touchedRow.columns {
-		r.update(name, value)
-	}
+	r.update(trx, touchedRow.columns)
 }
 
 func (r *Row) abortTouchedRow(trx *Transaction, touchedRow *Row) {

@@ -16,6 +16,10 @@ const (
 type Transaction struct {
 	Number      int
 	touchedRows map[*Row]*Row
+	usedRows    map[*Row]int
+
+	queryHistory []string
+	locking      bool
 }
 
 var lastTransactionNumber = 1
@@ -38,11 +42,27 @@ func newTransaction(num int) *Transaction {
 	return &Transaction{
 		Number:      num,
 		touchedRows: map[*Row]*Row{},
+		usedRows:    map[*Row]int{},
+
+		queryHistory: []string{},
+		locking:      false,
 	}
 }
 
 func (trx *Transaction) isImmediate() bool {
 	return trx.Number == -1
+}
+
+func (trx *Transaction) AddHistory(sql string) {
+	if trx.isImmediate() {
+		return
+	}
+
+	trx.queryHistory = append(trx.queryHistory, sql)
+}
+
+func (trx *Transaction) QueryHistory() []string {
+	return trx.queryHistory
 }
 
 func (trx *Transaction) getTouchedRow(r *Row) *Row {
@@ -56,6 +76,47 @@ func (trx *Transaction) getTouchedRow(r *Row) *Row {
 
 func (trx *Transaction) addTouchedRow(currentRow, touchedRow *Row) {
 	trx.touchedRows[currentRow] = touchedRow
+}
+
+func (trx *Transaction) addUsedRow(r *Row, v int) {
+	if trx.locking {
+		return
+	}
+	if _, ok := trx.usedRows[r]; ok {
+		return
+	}
+	trx.usedRows[r] = v
+}
+
+func (trx *Transaction) expandLock() error {
+	var lockedRows []*Row
+	for r, versionUsed := range trx.usedRows {
+		if r.isCommittedRow == false {
+			continue
+		}
+		GlobalLocker.Lock(r, trx)
+		lockedRows = append(lockedRows, r)
+
+		if r.version != versionUsed {
+			for _, targetRow := range lockedRows {
+				GlobalLocker.Unlock(targetRow, trx)
+			}
+			return NewTransactionConflictError()
+		}
+	}
+	trx.locking = true
+	return nil
+}
+
+func (trx *Transaction) shrinkLock() {
+	for r := range trx.usedRows {
+		if r.isCommittedRow == false {
+			continue
+		}
+		GlobalLocker.Unlock(r, trx)
+	}
+	trx.locking = false
+	trx.usedRows = map[*Row]int{}
 }
 
 func (trx *Transaction) CreateBeginChangeSet() *structs.BeginChangeSet {
@@ -89,10 +150,31 @@ func (trx *Transaction) CreateCommitChangeSet() *structs.CommitChangeSet {
 	}
 }
 
-func (trx *Transaction) ApplyCommitChangeSet(_ *structs.CommitChangeSet) error {
+func (trx *Transaction) ApplyCommitChangeSet(cs *structs.CommitChangeSet, afterLockFn func(*structs.CommitChangeSet) error) error {
+	err := trx.expandLock()
+	if err != nil {
+		return err
+	}
+	defer trx.shrinkLock()
+
+	err = afterLockFn(cs)
+	if err != nil {
+		return err
+	}
+
 	for existingRow, touchedRow := range trx.touchedRows {
-		existingRow.applyTouchedRow(trx, touchedRow)
+		existingRow.commitTouchedRow(trx, touchedRow)
 	}
 
 	return nil
+}
+
+func (trx *Transaction) CreateAbortChangeSet() *structs.AbortChangeSet {
+	return &structs.AbortChangeSet{
+		Number: trx.Number,
+	}
+}
+
+func (trx *Transaction) ApplyAbortChangeSet(_ *structs.AbortChangeSet) {
+	// do nothing
 }

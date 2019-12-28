@@ -23,12 +23,12 @@ func newConnection(server *Server) *Connection {
 	}
 }
 
-func (c *Connection) Query(sql string) *structs.Result {
+func (c *Connection) Query(sql string) (*structs.Result, error) {
 	result := structs.NewEmptyResult()
 	stmt, err := sqlparser.ParseStrictDDL(sql)
 	if err != nil {
 		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid sql")
-		return result
+		return result, nil
 	}
 	fmt.Printf("sql: %s\n", sql)
 
@@ -39,11 +39,26 @@ func (c *Connection) Query(sql string) *structs.Result {
 		err = c.rollback()
 	case *sqlparser.Commit:
 		err = c.commit()
+		for {
+			if err == nil {
+				break
+			}
+			if _, ok := err.(*data.TransactionConflictError); !ok {
+				break
+			}
+			err = c.abort()
+			if err != nil {
+				break
+			}
+			err = c.retryTransaction()
+		}
 	case *sqlparser.Select:
 		result, err = c.selectTable(t)
 	case *sqlparser.Insert:
+		c.currentTransaction.AddHistory(sql)
 		err = c.insert(t)
 	case *sqlparser.Update:
+		c.currentTransaction.AddHistory(sql)
 		err = c.update(t)
 	case *sqlparser.DBDDL:
 		err = c.server.runDBDDL(t)
@@ -60,7 +75,7 @@ func (c *Connection) Query(sql string) *structs.Result {
 		result = structs.NewEmptyResult()
 	}
 
-	return result
+	return result, err
 }
 
 func (c *Connection) selectTable(q *sqlparser.Select) (*structs.Result, error) {
@@ -194,15 +209,38 @@ func (c *Connection) rollback() error {
 func (c *Connection) commit() error {
 	if c.currentTransaction != nil {
 		cs := c.currentTransaction.CreateCommitChangeSet()
-		err := c.server.wal.Write(cs)
-		if err != nil {
-			return err
-		}
-		err = c.currentTransaction.ApplyCommitChangeSet(cs)
+		err := c.currentTransaction.ApplyCommitChangeSet(cs, func(cs *structs.CommitChangeSet) error {
+			return c.server.wal.Write(cs)
+		})
 		if err != nil {
 			return err
 		}
 	}
 	c.currentTransaction = data.ImmediateTransaction
 	return nil
+}
+
+func (c *Connection) abort() error {
+	cs := c.currentTransaction.CreateAbortChangeSet()
+	err := c.server.wal.Write(cs)
+	if err != nil {
+		return err
+	}
+	c.currentTransaction.ApplyAbortChangeSet(cs)
+	return nil
+}
+
+func (c *Connection) retryTransaction() error {
+	queries := c.currentTransaction.QueryHistory()
+	err := c.begin()
+	if err != nil {
+		return err
+	}
+	for _, q := range queries {
+		_, err = c.Query(q)
+		if err != nil {
+			return err
+		}
+	}
+	return c.commit()
 }

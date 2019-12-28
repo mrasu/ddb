@@ -4,10 +4,10 @@ Dumb RDBMS for my study
 * CREATE DATABASE, CREATE TABLE, INSERT, UPDATE, SELECT
 * Persist to Disk (Wal and Snapshot)
 * Transaction
+* Multiple process (goroutine)
 
 # TODO
 * Test
-* Multiple process (goroutine)
 * Join
 * Index
 * Replication

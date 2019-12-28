@@ -84,16 +84,43 @@ func (s *Server) RecoverFromWal() error {
 			db := s.databases[c.DBName]
 			trx := s.transactionHolder.Get(c.TransactionNumber)
 			if trx == nil {
-				err = errors.Errorf("found not started transaction: %d", c.TransactionNumber)
+				panic(fmt.Sprintf("found not started transaction: %d", c.TransactionNumber))
 			}
 			err = db.ApplyInsertChangeSets(trx, []*structs.InsertChangeSet{c})
 		case *structs.UpdateChangeSet:
 			db := s.databases[c.DBName]
 			trx := s.transactionHolder.Get(c.TransactionNumber)
 			if trx == nil {
-				err = errors.Errorf("found not started transaction: %d", c.TransactionNumber)
+				panic(fmt.Sprintf("found not started transaction: %d", c.TransactionNumber))
 			}
 			err = db.ApplyUpdateChangeSets(trx, []*structs.UpdateChangeSet{c})
+		case *structs.BeginChangeSet:
+			trx := data.StartNewTransaction()
+			trx.Number = c.Number
+			ok := s.transactionHolder.Add(trx)
+			if !ok {
+				panic("invalid 'BEGIN' change set")
+			}
+		case *structs.CommitChangeSet:
+			trx := s.transactionHolder.Get(c.Number)
+			if trx == nil {
+				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
+			}
+			err = trx.ApplyCommitChangeSet(c, func(set *structs.CommitChangeSet) error {
+				return nil
+			})
+		case *structs.RollbackChangeSet:
+			trx := s.transactionHolder.Get(c.Number)
+			if trx == nil {
+				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
+			}
+			trx.ApplyRollbackChangeSet(c)
+		case *structs.AbortChangeSet:
+			trx := s.transactionHolder.Get(c.Number)
+			if trx == nil {
+				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
+			}
+			trx.ApplyAbortChangeSet(c)
 		default:
 			return errors.Errorf("Not supported ChangeSet: %s", c)
 		}

@@ -274,20 +274,24 @@ func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([
 		return nil, err
 	}
 
-	cols := map[string]string{}
-	for _, expr := range q.Exprs {
-		colName := expr.Name.Name.String()
-		switch qExpr := expr.Expr.(type) {
-		case *sqlparser.SQLVal:
-			cols[colName] = string(qExpr.Val)
-		default:
-			return nil, errors.Errorf("not supported expression")
-		}
-	}
-
 	var css []*structs.UpdateChangeSet
-
 	for _, row := range rows {
+		cols := map[string]string{}
+		for _, expr := range q.Exprs {
+			colName := expr.Name.Name.String()
+			switch qExpr := expr.Expr.(type) {
+			case *sqlparser.SQLVal:
+				cols[colName] = string(qExpr.Val)
+			case *sqlparser.BinaryExpr:
+				val, err := t.calcBinaryUpdate(trx, colName, row, qExpr)
+				if err != nil {
+					return nil, err
+				}
+				cols[colName] = val
+			default:
+				return nil, errors.Errorf("not supported expression")
+			}
+		}
 		cs := &structs.UpdateChangeSet{
 			TableName:    t.Name,
 			PrimaryKeyId: row.GetPrimaryId(trx),
@@ -301,14 +305,70 @@ func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([
 	return css, nil
 }
 
+func (t *Table) calcBinaryUpdate(trx *Transaction, colName string, r *Row, q *sqlparser.BinaryExpr) (string, error) {
+	leftVal := ""
+	switch left := q.Left.(type) {
+	case *sqlparser.ColName:
+		leftVal = r.Get(trx, left.Name.String())
+	case *sqlparser.SQLVal:
+		leftVal = string(left.Val)
+	default:
+		return "", errors.Errorf("not supported expression")
+	}
+
+	rightVal := ""
+	switch right := q.Right.(type) {
+	case *sqlparser.ColName:
+		rightVal = r.Get(trx, right.Name.String())
+	case *sqlparser.SQLVal:
+		rightVal = string(right.Val)
+	default:
+		return "", errors.Errorf("not supported expression")
+	}
+
+	for _, meta := range t.rowMetas {
+		if meta.Name == colName {
+			if meta.ColumnType == types.Int || meta.ColumnType == types.AutoIncrementInt {
+				left, err := strconv.Atoi(leftVal)
+				if err != nil {
+					return "", err
+				}
+				right, err := strconv.Atoi(leftVal)
+				if err != nil {
+					return "", err
+				}
+				switch q.Operator {
+				case "+":
+					return strconv.Itoa(left + right), nil
+				case "-":
+					return strconv.Itoa(left - right), nil
+				default:
+					return "", errors.Errorf("not supported expression")
+				}
+			}
+			if meta.ColumnType == types.VarChar {
+				switch q.Operator {
+				case "+":
+					return leftVal + rightVal, nil
+				default:
+					return "", errors.Errorf("not supported expression")
+				}
+			}
+		}
+	}
+
+	return "", errors.Errorf("No column: %s", colName)
+}
+
 func (t *Table) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateChangeSet) error {
 	// TODO: O(N*M)
 	for _, cs := range css {
 		found := false
 		for _, r := range t.rows {
 			if r.GetPrimaryId(trx) == cs.PrimaryKeyId {
-				for col, newVal := range cs.Columns {
-					r.Update(trx, col, newVal)
+				err := r.Update(trx, cs.Columns)
+				if err != nil {
+					return err
 				}
 				found = true
 				break

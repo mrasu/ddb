@@ -16,6 +16,7 @@ const (
 	Begin    = 900
 	Commit   = 910
 	Rollback = 920
+	Abort    = 930
 )
 
 var NewLineBytes = []byte("\n")
@@ -84,6 +85,12 @@ func (cs *RollbackChangeSet) ToWalFormat(lsn int) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Rollback)
 }
 
+func (cs *AbortChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
+func (cs *AbortChangeSet) GetLsn() int    { return cs.Lsn }
+func (cs *AbortChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+	return cs.toWalFormatWith(lsn, cs, Abort)
+}
+
 type CreateDBChangeSet struct {
 	*AWalFormat
 	Lsn  int    `json:"lsn"`
@@ -132,6 +139,12 @@ type RollbackChangeSet struct {
 }
 
 type CommitChangeSet struct {
+	*AWalFormat
+	Lsn    int `json:"lsn"`
+	Number int `json:"trx_num"`
+}
+
+type AbortChangeSet struct {
 	*AWalFormat
 	Lsn    int `json:"lsn"`
 	Number int `json:"trx_num"`
