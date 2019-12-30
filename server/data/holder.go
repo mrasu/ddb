@@ -18,7 +18,7 @@ func (h *TransactionHolder) Add(trx *Transaction) bool {
 
 func (h *TransactionHolder) Get(num int) *Transaction {
 	if num == -1 {
-		return ImmediateTransaction
+		return CreateImmediateTransaction()
 	}
 	trx, ok := h.transactionMap[num]
 	if !ok {

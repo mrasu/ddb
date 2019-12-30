@@ -13,13 +13,17 @@ import (
 type Connection struct {
 	server *Server
 
-	currentTransaction *data.Transaction
+	immediateTransaction *data.Transaction
+	currentTransaction   *data.Transaction
 }
 
 func newConnection(server *Server) *Connection {
+	immediateTransaction := data.CreateImmediateTransaction()
 	return &Connection{
-		server:             server,
-		currentTransaction: data.ImmediateTransaction,
+		server: server,
+
+		immediateTransaction: immediateTransaction,
+		currentTransaction:   immediateTransaction,
 	}
 }
 
@@ -30,7 +34,7 @@ func (c *Connection) Query(sql string) (*structs.Result, error) {
 		log.Error().Stack().Err(err).Str("SQL", sql).Msg("Invalid sql")
 		return result, nil
 	}
-	fmt.Printf("sql: %s\n", sql)
+	log.Debug().Str("sql", sql).Msg("")
 
 	switch t := stmt.(type) {
 	case *sqlparser.Begin:
@@ -145,10 +149,10 @@ func (c *Connection) update(q *sqlparser.Update) error {
 			}
 			return c.updateTable(q, db, tName)
 		default:
-			return errors.Errorf("Not allowed expression: %s", e)
+			return errors.Errorf("Not allowed expression: %v", e)
 		}
 	default:
-		return errors.Errorf("Not allowed expression: %s", e)
+		return errors.Errorf("Not allowed expression: %v", e)
 	}
 }
 
@@ -202,7 +206,7 @@ func (c *Connection) rollback() error {
 		}
 		c.currentTransaction.ApplyRollbackChangeSet(cs)
 	}
-	c.currentTransaction = data.ImmediateTransaction
+	c.currentTransaction = c.immediateTransaction
 	return nil
 }
 
@@ -216,7 +220,7 @@ func (c *Connection) commit() error {
 			return err
 		}
 	}
-	c.currentTransaction = data.ImmediateTransaction
+	c.currentTransaction = c.immediateTransaction
 	return nil
 }
 

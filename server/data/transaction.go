@@ -6,12 +6,7 @@ import (
 	"github.com/mrasu/ddb/server/structs"
 )
 
-type transactionChangeType int
-
-const (
-	Insert transactionChangeType = iota
-	Update
-)
+const ImmediateTransactionNumber = -1
 
 type Transaction struct {
 	Number      int
@@ -24,8 +19,6 @@ type Transaction struct {
 
 var lastTransactionNumber = 1
 var mu sync.Mutex
-
-var ImmediateTransaction = newTransaction(-1)
 
 func StartNewTransaction() *Transaction {
 	mu.Lock()
@@ -49,12 +42,16 @@ func newTransaction(num int) *Transaction {
 	}
 }
 
-func (trx *Transaction) isImmediate() bool {
-	return trx.Number == -1
+func CreateImmediateTransaction() *Transaction {
+	return newTransaction(ImmediateTransactionNumber)
+}
+
+func (trx *Transaction) IsImmediate() bool {
+	return trx.Number == ImmediateTransactionNumber
 }
 
 func (trx *Transaction) AddHistory(sql string) {
-	if trx.isImmediate() {
+	if trx.IsImmediate() {
 		return
 	}
 

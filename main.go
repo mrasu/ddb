@@ -11,6 +11,7 @@ import (
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 	// zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
 	s, err := server.NewServer()

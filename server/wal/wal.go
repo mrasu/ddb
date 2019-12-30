@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/mrasu/ddb/server/structs"
 
@@ -18,6 +21,9 @@ type Wal struct {
 	prefix     string
 	fileNumber int
 	lsn        int
+
+	// TODO: DI
+	testReadWriter io.ReadWriteCloser
 }
 
 func NewWal(dir, prefix string) (*Wal, error) {
@@ -34,6 +40,14 @@ func NewWal(dir, prefix string) (*Wal, error) {
 		fileNumber: 0,
 		lsn:        0,
 	}, nil
+}
+
+func NewTestWal(writer io.ReadWriteCloser) *Wal {
+	return &Wal{
+		fileNumber:     0,
+		lsn:            0,
+		testReadWriter: writer,
+	}
 }
 
 func (w *Wal) CurrentLsn() int {
@@ -84,14 +98,20 @@ func (w *Wal) WriteSlice(css []structs.ChangeSet) error {
 }
 
 func (w *Wal) writeFile(bs []byte) error {
-	fmt.Println(string(bs))
+	log.Debug().Str("wal", string(bs)).Msg("")
 
-	file, err := os.OpenFile(w.fileName(), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		return errors.Wrap(err, "failed to open file")
+	var writer io.Writer
+	if w.testReadWriter != nil {
+		writer = w.testReadWriter
+	} else {
+		file, err := os.OpenFile(w.fileName(), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			return errors.Wrap(err, "failed to open file")
+		}
+		writer = file
 	}
 
-	_, err = file.Write(bs)
+	_, err := writer.Write(bs)
 	if err != nil {
 		return errors.Wrap(err, "failed to write file")
 	}
@@ -111,19 +131,26 @@ func (w *Wal) fileName() string {
 }
 
 func (w *Wal) Read() ([]structs.ChangeSet, error) {
-	if _, err := os.Stat(w.fileName()); err != nil {
-		if os.IsNotExist(err) {
-			return []structs.ChangeSet{}, nil
+	var bs []byte
+	if w.testReadWriter == nil {
+		if _, err := os.Stat(w.fileName()); err != nil {
+			if os.IsNotExist(err) {
+				return []structs.ChangeSet{}, nil
+			}
+			return nil, errors.Wrap(err, fmt.Sprintf("Invalid directory: %s", w.fileName()))
 		}
-		return nil, errors.Wrap(err, fmt.Sprintf("Invalid directory: %s", w.fileName()))
-	}
 
-	bs, err := ioutil.ReadFile(w.fileName())
-	if err != nil {
-		if !os.IsNotExist(err) {
+		b, err := ioutil.ReadFile(w.fileName())
+		if err != nil {
 			return nil, err
 		}
-		return nil, err
+		bs = b
+	} else {
+		b, err := ioutil.ReadAll(w.testReadWriter)
+		if err != nil {
+			return nil, err
+		}
+		bs = b
 	}
 
 	var css []structs.ChangeSet

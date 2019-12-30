@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/xwb1989/sqlparser"
 
@@ -28,6 +29,15 @@ func NewServer() (*Server, error) {
 	return &Server{
 		databases: map[string]*data.Database{},
 		wal:       w,
+
+		transactionHolder: data.NewHolder(),
+	}, nil
+}
+
+func NewTestServer(writer io.ReadWriteCloser) (*Server, error) {
+	return &Server{
+		databases: map[string]*data.Database{},
+		wal:       wal.NewTestWal(writer),
 
 		transactionHolder: data.NewHolder(),
 	}, nil
@@ -157,6 +167,7 @@ func (s *Server) createDatabase(dbddl *sqlparser.DBDDL) error {
 	name := dbddl.DBName
 	if _, ok := s.databases[name]; ok {
 		if dbddl.IfExists {
+			// not supported by sqlparser?
 			return nil
 		} else {
 			return errors.Errorf("database already exists: %s", name)

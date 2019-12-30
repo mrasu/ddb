@@ -31,7 +31,7 @@ func newEmptyRow(table *Table) *Row {
 
 func CreateRow(trx *Transaction, t *Table, columns map[string]string) *Row {
 	r := newEmptyRow(t)
-	if trx.isImmediate() {
+	if trx.IsImmediate() {
 		r.columns = columns
 		return r
 	}
@@ -94,7 +94,7 @@ func (r *Row) ensureTouchedRow(trx *Transaction, t *Table) *Row {
 }
 
 func (r *Row) Update(trx *Transaction, values map[string]string) error {
-	if trx.isImmediate() {
+	if trx.IsImmediate() {
 		err := trx.expandLock()
 		if err != nil {
 			return err

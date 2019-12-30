@@ -27,6 +27,14 @@ func (db *Database) Inspect() {
 	}
 }
 
+func (db *Database) CopyTables() []*Table {
+	var ts []*Table
+	for _, t := range db.tables {
+		ts = append(ts, t.CopyTable())
+	}
+	return ts
+}
+
 func (db *Database) MakeCreateTableChangeSet(ddl *sqlparser.DDL) (*structs.CreateTableChangeSet, error) {
 	t, err := buildTable(ddl)
 	if err != nil {
