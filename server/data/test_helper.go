@@ -1,8 +1,11 @@
 package data
 
 import (
-	"github.com/xwb1989/sqlparser"
+	"fmt"
 	"testing"
+
+	"github.com/mrasu/ddb/thelper"
+	"github.com/xwb1989/sqlparser"
 
 	"github.com/mrasu/ddb/server/structs"
 )
@@ -69,10 +72,45 @@ func AssertResult(t *testing.T, res *structs.Result, eRowValues []map[string]str
 	}
 }
 
+func AssertResultPrecise(t *testing.T, res *structs.Result, eRowColumns []string, eRowValues [][]string) {
+	for _, vals := range eRowValues {
+		if len(eRowColumns) != len(vals) {
+			t.Errorf("Invalid expectation: %d", len(vals))
+		}
+	}
+	thelper.AssertInt(t, "Invalid column size", len(eRowColumns), len(res.Columns))
+
+	for i, c := range res.Columns {
+		eCol := eRowColumns[i]
+		thelper.AssertString(t, "Unexpected column", eCol, c)
+	}
+
+	thelper.AssertInt(t, "Invalid record size", len(eRowValues), len(res.Values))
+	for i, rowValue := range res.Values {
+		eValues := eRowValues[i]
+
+		for j, v := range rowValue {
+			eV := eValues[j]
+			thelper.AssertString(t, fmt.Sprintf("Invalid value at %s", res.Columns[j]), eV, v)
+		}
+	}
+}
+
 func ParseSQL(t *testing.T, sql string) sqlparser.Statement {
 	q, err := sqlparser.ParseStrictDDL(sql)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return q
+}
+
+func GetAll(t *testing.T, selectSQL string, dbs map[string]*Database) *structs.Result {
+	stmt := ParseSQL(t, selectSQL).(*sqlparser.Select)
+	sev := &SelectEvaluator{}
+	trx := CreateImmediateTransaction()
+
+	joinRows, err := sev.SelectTable(trx, stmt, stmt.From[0], dbs)
+	thelper.AssertNoError(t, err)
+
+	return sev.ToResult(trx, stmt, joinRows)
 }

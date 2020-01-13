@@ -83,22 +83,12 @@ func (c *Connection) Query(sql string) (*structs.Result, error) {
 }
 
 func (c *Connection) selectTable(q *sqlparser.Select) (*structs.Result, error) {
-	// Supporting only 1 table
-	tExpr, ok := q.From[0].(*sqlparser.AliasedTableExpr)
-	if !ok {
-		return nil, errors.Errorf("Not supported FROM values: %s", q.From[0])
+	sev := &data.SelectEvaluator{}
+	joinRows, err := sev.SelectTable(c.currentTransaction, q, q.From[0], c.server.databases)
+	if err != nil {
+		return nil, err
 	}
-	table, ok := tExpr.Expr.(sqlparser.TableName)
-	if !ok {
-		return nil, errors.Errorf("Not supported FROM values: %s", q.From[0])
-	}
-
-	db, ok := c.server.databases[table.Qualifier.String()]
-	if !ok {
-		return nil, errors.Errorf("Database doesn't exist: %s", table.Qualifier.String())
-	}
-
-	return db.Select(c.currentTransaction, q, table.Name.String())
+	return sev.ToResult(c.currentTransaction, q, joinRows), nil
 }
 
 func (c *Connection) insert(q *sqlparser.Insert) error {

@@ -77,18 +77,6 @@ func TestDatabase_ApplyCreateTableChangeSet(t *testing.T) {
 	thelper.AssertBool(t, "Invalid meta name", true, meta.AllowsNull)
 }
 
-func TestDatabase_Select(t *testing.T) {
-	db := createDefaultDB()
-	stmt := ParseSQL(t, "SELECT * FROM hello.world").(*sqlparser.Select)
-	res, err := db.Select(CreateImmediateTransaction(), stmt, "world")
-	thelper.AssertNoError(t, err)
-	eRowValues := []map[string]string{
-		{"id": "1", "num": "10", "text": "t1"},
-		{"id": "2", "num": "20", "text": "t2"},
-	}
-	AssertResult(t, res, eRowValues)
-}
-
 func TestDatabase_CreateInsertChangeSets(t *testing.T) {
 	db := createDefaultDB()
 	stmt := ParseSQL(t, "INSERT INTO world(num, text) VALUES(111, 'foo'),(222, 'bar')").(*sqlparser.Insert)
@@ -122,10 +110,7 @@ func TestDatabase_ApplyInsertChangeSet(t *testing.T) {
 	err := db.ApplyInsertChangeSets(CreateImmediateTransaction(), css)
 	thelper.AssertNoError(t, err)
 
-	stmt := ParseSQL(t, "SELECT * FROM world").(*sqlparser.Select)
-	res, err := db.Select(CreateImmediateTransaction(), stmt, "world")
-	thelper.AssertNoError(t, err)
-
+	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})
 	eRowValues := []map[string]string{
 		{"id": "1", "num": "10", "text": "t1"},
 		{"id": "2", "num": "20", "text": "t2"},
@@ -173,8 +158,7 @@ func TestDatabase_ApplyUpdateChangeSets(t *testing.T) {
 	err := db.ApplyUpdateChangeSets(CreateImmediateTransaction(), css)
 	thelper.AssertNoError(t, err)
 
-	stmt := ParseSQL(t, "SELECT * FROM world").(*sqlparser.Select)
-	res, err := db.Select(CreateImmediateTransaction(), stmt, "world")
+	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})
 	thelper.AssertNoError(t, err)
 
 	eRowValues := []map[string]string{

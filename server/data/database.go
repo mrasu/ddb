@@ -2,6 +2,7 @@ package data
 
 import (
 	"fmt"
+
 	"github.com/mrasu/ddb/server/structs"
 	"github.com/pkg/errors"
 	"github.com/xwb1989/sqlparser"
@@ -55,12 +56,27 @@ func (db *Database) ApplyCreateTableChangeSet(cs *structs.CreateTableChangeSet) 
 	return nil
 }
 
-func (db *Database) Select(trx *Transaction, q *sqlparser.Select, tName string) (*structs.Result, error) {
-	t, err := db.getTable(tName)
+func (db *Database) JoinRows(trx *Transaction, j sqlparser.JoinCondition, leftRows []*JoinRow, newTableName, alias string) ([]*JoinRow, error) {
+	var res []*JoinRow
+
+	eev := ExprEvaluator{}
+	t, err := db.getTable(newTableName)
 	if err != nil {
 		return nil, err
 	}
-	return t.Select(trx, q)
+	for _, lRow := range leftRows {
+		for _, rRow := range t.rows {
+			ok, err := eev.evaluateAliasJoin(trx, j.On, lRow, rRow, alias)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				res = append(res, lRow.AddRow(alias, rRow))
+			}
+		}
+	}
+
+	return res, nil
 }
 
 func (db *Database) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {

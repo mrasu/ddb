@@ -123,3 +123,62 @@ func updateMultipleValueForTest(s *server.Server) {
 	}()
 	wg.Wait()
 }
+
+func TestJoin(t *testing.T) {
+	s := createDefault(t)
+	c := s.StartNewConnection()
+	sql := `
+SELECT *
+FROM
+	hello.world AS w1
+	INNER JOIN hello.world AS w2 ON w1.message <> w2.message
+WHERE
+	w1.id <> 1 AND
+	w2.id <> 2 AND
+	w1.id <> 1
+`
+	res, err := c.Query(sql)
+	if err != nil {
+		t.Error(err)
+	}
+
+	eRowColumns := []string{"id", "message", "id", "message"}
+	eRowValues := [][]string{
+		{"2", "bar", "1", "foo"},
+		{"2", "bar", "3", "baz"},
+		{"2", "bar", "4", "qux"},
+		{"3", "baz", "1", "foo"},
+		{"3", "baz", "4", "qux"},
+		{"4", "qux", "1", "foo"},
+		{"4", "qux", "3", "baz"},
+	}
+	data.AssertResultPrecise(t, res, eRowColumns, eRowValues)
+}
+
+func createDefault(t *testing.T) *server.Server {
+	s, err := server.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.UseTemporalWal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := s.StartNewConnection()
+	_, err = c.Query("CREATE DATABASE hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Query("CREATE TABLE hello.world(id int AUTO_INCREMENT, message varchar(10), PRIMARY KEY(id))")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Query("INSERT INTO hello.world(message) VALUES ('foo'), ('bar'), ('baz'), ('qux')")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return s
+}

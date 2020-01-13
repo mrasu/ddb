@@ -87,95 +87,6 @@ func newEmtpyTable(name string) *Table {
 	}
 }
 
-func (t *Table) Select(trx *Transaction, q *sqlparser.Select) (*structs.Result, error) {
-	rows := t.rows
-	if q.Where != nil {
-		scopedRows, err := t.selectWhere(trx, q.Where)
-		if err != nil {
-			return nil, err
-		}
-		rows = scopedRows
-	}
-
-	var columns []string
-	for _, expr := range q.SelectExprs {
-		switch e := expr.(type) {
-		case *sqlparser.StarExpr:
-			for _, c := range t.rowMetas {
-				columns = append(columns, c.Name)
-			}
-		case *sqlparser.AliasedExpr:
-			switch colExpr := e.Expr.(type) {
-			case *sqlparser.ColName:
-				columns = append(columns, colExpr.Name.String())
-			default:
-				return nil, errors.Errorf("Unsupported SELECT: %s", expr)
-			}
-		default:
-			panic(fmt.Sprintf("unexpected behavior: %v", expr))
-		}
-	}
-
-	var values [][]string
-	for _, r := range rows {
-		var val []string
-
-		for _, c := range columns {
-			val = append(val, r.Get(trx, c))
-		}
-		values = append(values, val)
-	}
-
-	return structs.NewResult(columns, values), nil
-}
-
-func (t *Table) selectWhere(trx *Transaction, w *sqlparser.Where) ([]*Row, error) {
-	if w.Type != sqlparser.WhereStr {
-		panic("unexpected behavior: WHERE clause holds HAVING")
-	}
-
-	var column string
-	var restriction string
-	switch e := w.Expr.(type) {
-	case *sqlparser.ComparisonExpr:
-		if e.Operator != "=" {
-			return nil, errors.Errorf("not supported operator in WHERE: %s", e.Operator)
-		}
-		switch colE := e.Left.(type) {
-		case *sqlparser.ColName:
-			column = colE.Name.String()
-		case *sqlparser.SQLVal:
-			restriction = string(colE.Val)
-		}
-
-		switch colE := e.Right.(type) {
-		case *sqlparser.ColName:
-			column = colE.Name.String()
-		case *sqlparser.SQLVal:
-			restriction = string(colE.Val)
-		}
-
-		if column == "" || restriction == "" {
-			return nil, errors.Errorf("Not supported WHERE expression. column: %s, restriction: %s", column, restriction)
-		}
-	default:
-		return nil, errors.New("Not supported WHERE expression")
-	}
-
-	if !t.containsColumn(column) {
-		return nil, errors.Errorf("Column not exist: %s", column)
-	}
-
-	var rows []*Row
-	for _, r := range t.rows {
-		if r.Get(trx, column) == restriction {
-			rows = append(rows, r)
-		}
-	}
-
-	return rows, nil
-}
-
 func (t *Table) containsColumn(colName string) bool {
 	for _, m := range t.rowMetas {
 		if colName == m.Name {
@@ -271,11 +182,17 @@ func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([
 	if q.Where == nil {
 		rows = t.rows
 	} else {
-		rs, err := t.selectWhere(trx, q.Where)
-		if err != nil {
-			return nil, err
+		eev := ExprEvaluator{}
+		for _, r := range t.rows {
+			// TODO: Allow Alias
+			ok, err := eev.evaluateAliasRow(trx, "", q.Where.Expr, r)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				rows = append(rows, r)
+			}
 		}
-		rows = rs
 	}
 
 	var css []*structs.UpdateChangeSet

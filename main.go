@@ -70,7 +70,20 @@ func main() {
 	updateValue(s)
 	updateMultipleValue(s)
 
-	res, _ = c.Query("SELECT * FROM hello.world")
+	sql := `
+SELECT *
+FROM
+	hello.world AS w1
+	INNER JOIN hello.world AS w2 ON w1.message <> w2.message
+WHERE
+	w1.id <> 1 AND
+	w2.id <> 2 AND
+	w1.id <> 1
+`
+	res, err = c.Query(sql)
+	if err != nil {
+		die(err)
+	}
 	res.Inspect()
 	// res = c.Query("SELECT message FROM hello.world")
 	// res.Inspect()

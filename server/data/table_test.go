@@ -49,47 +49,6 @@ func TestNewTableFromChangeSet(t *testing.T) {
 	}
 }
 
-func TestTable_Select(t *testing.T) {
-	table := createDefaultTable()
-	stmt := ParseSQL(t, "SELECT * FROM world").(*sqlparser.Select)
-	res, err := table.Select(CreateImmediateTransaction(), stmt)
-	if err != nil {
-		t.Error(err)
-	}
-	eRowValues := []map[string]string{
-		{"id": "1", "num": "10", "text": "t1"},
-		{"id": "2", "num": "20", "text": "t2"},
-	}
-	AssertResult(t, res, eRowValues)
-}
-
-func TestTable_Select_WithWhere(t *testing.T) {
-	table := createDefaultTable()
-	stmt := ParseSQL(t, "SELECT * FROM world WHERE num = 10").(*sqlparser.Select)
-	res, err := table.Select(CreateImmediateTransaction(), stmt)
-	if err != nil {
-		t.Error(err)
-	}
-	eRowValues := []map[string]string{
-		{"id": "1", "num": "10", "text": "t1"},
-	}
-	AssertResult(t, res, eRowValues)
-}
-
-func TestTable_Select_WithColumnName(t *testing.T) {
-	table := createDefaultTable()
-	stmt := ParseSQL(t, "SELECT num, text FROM world").(*sqlparser.Select)
-	res, err := table.Select(CreateImmediateTransaction(), stmt)
-	if err != nil {
-		t.Error(err)
-	}
-	eRowValues := []map[string]string{
-		{"num": "10", "text": "t1"},
-		{"num": "20", "text": "t2"},
-	}
-	AssertResult(t, res, eRowValues)
-}
-
 func TestTable_CreateInsertChangeSets(t *testing.T) {
 	table := createDefaultTable()
 	stmt := ParseSQL(t, "INSERT INTO world(num, text) VALUES(111, 'foo'),(222, 'bar')").(*sqlparser.Insert)
@@ -120,7 +79,8 @@ func TestTable_CreateInsertChangeSets(t *testing.T) {
 }
 
 func TestTable_ApplyInsertChangeSets(t *testing.T) {
-	table := createDefaultTable()
+	db := createDefaultDB()
+	table := db.tables["world"]
 
 	css := []*structs.InsertChangeSet{
 		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"id": "3", "num": "333", "text": "t333"}},
@@ -131,11 +91,7 @@ func TestTable_ApplyInsertChangeSets(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	stmt := ParseSQL(t, "SELECT * FROM world").(*sqlparser.Select)
-	res, err := table.Select(CreateImmediateTransaction(), stmt)
-	if err != nil {
-		t.Error(err)
-	}
+	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})
 	eRowValues := []map[string]string{
 		{"id": "1", "num": "10", "text": "t1"},
 		{"id": "2", "num": "20", "text": "t2"},
@@ -183,7 +139,8 @@ func TestTable_CreateUpdateChangeSets(t *testing.T) {
 }
 
 func TestTable_ApplyUpdateChangeSets(t *testing.T) {
-	table := createDefaultTable()
+	db := createDefaultDB()
+	table := db.tables["world"]
 
 	css := []*structs.UpdateChangeSet{
 		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 1},
@@ -194,11 +151,7 @@ func TestTable_ApplyUpdateChangeSets(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	stmt := ParseSQL(t, "SELECT * FROM world").(*sqlparser.Select)
-	res, err := table.Select(CreateImmediateTransaction(), stmt)
-	if err != nil {
-		t.Error(err)
-	}
+	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})
 	eRowValues := []map[string]string{
 		{"id": "1", "num": "10", "text": "foo"},
 		{"id": "2", "num": "20", "text": "foo"},
