@@ -4,7 +4,7 @@ type TransactionHolder struct {
 	transactionMap map[int]*Transaction
 }
 
-func NewHolder() *TransactionHolder {
+func NewTransactionHolder() *TransactionHolder {
 	return &TransactionHolder{transactionMap: map[int]*Transaction{}}
 }
 

@@ -9,9 +9,9 @@ import (
 const ImmediateTransactionNumber = -1
 
 type Transaction struct {
-	Number      int
-	touchedRows map[*Row]*Row
-	usedRows    map[*Row]int
+	Number           int
+	valueChangedRows map[*Row]*Row
+	valueReadRows    map[*Row]int
 
 	queryHistory []string
 	locking      bool
@@ -33,9 +33,9 @@ func StartNewTransaction() *Transaction {
 
 func newTransaction(num int) *Transaction {
 	return &Transaction{
-		Number:      num,
-		touchedRows: map[*Row]*Row{},
-		usedRows:    map[*Row]int{},
+		Number:           num,
+		valueChangedRows: map[*Row]*Row{},
+		valueReadRows:    map[*Row]int{},
 
 		queryHistory: []string{},
 		locking:      false,
@@ -62,32 +62,32 @@ func (trx *Transaction) QueryHistory() []string {
 	return trx.queryHistory
 }
 
-func (trx *Transaction) getTouchedRow(r *Row) *Row {
-	touchedRow, ok := trx.touchedRows[r]
+func (trx *Transaction) getValueChangedRow(r *Row) *Row {
+	valueChangedRow, ok := trx.valueChangedRows[r]
 	if ok {
-		return touchedRow
+		return valueChangedRow
 	} else {
 		return nil
 	}
 }
 
-func (trx *Transaction) addTouchedRow(currentRow, touchedRow *Row) {
-	trx.touchedRows[currentRow] = touchedRow
+func (trx *Transaction) addValueChangedRow(currentRow, valueChangedRow *Row) {
+	trx.valueChangedRows[currentRow] = valueChangedRow
 }
 
-func (trx *Transaction) addUsedRow(r *Row, v int) {
+func (trx *Transaction) addValueReadRow(r *Row, v int) {
 	if trx.locking {
 		return
 	}
-	if _, ok := trx.usedRows[r]; ok {
+	if _, ok := trx.valueReadRows[r]; ok {
 		return
 	}
-	trx.usedRows[r] = v
+	trx.valueReadRows[r] = v
 }
 
 func (trx *Transaction) expandLock() error {
 	var lockedRows []*Row
-	for r, versionUsed := range trx.usedRows {
+	for r, versionUsed := range trx.valueReadRows {
 		if r.isCommittedRow == false {
 			continue
 		}
@@ -106,14 +106,14 @@ func (trx *Transaction) expandLock() error {
 }
 
 func (trx *Transaction) shrinkLock() {
-	for r := range trx.usedRows {
+	for r := range trx.valueReadRows {
 		if r.isCommittedRow == false {
 			continue
 		}
 		GlobalLocker.Unlock(r, trx)
 	}
 	trx.locking = false
-	trx.usedRows = map[*Row]int{}
+	trx.valueReadRows = map[*Row]int{}
 }
 
 func (trx *Transaction) CreateBeginChangeSet() *structs.BeginChangeSet {
@@ -135,10 +135,10 @@ func (trx *Transaction) CreateRollbackChangeSet() *structs.RollbackChangeSet {
 
 func (trx *Transaction) ApplyRollbackChangeSet(_ *structs.RollbackChangeSet) {
 	// TODO: Allow nest?
-	for existingRow, touchedRow := range trx.touchedRows {
-		existingRow.abortTouchedRow(trx, touchedRow)
+	for existingRow, valueChangedRow := range trx.valueChangedRows {
+		existingRow.abortValueChangedRow(trx, valueChangedRow)
 	}
-	trx.touchedRows = map[*Row]*Row{}
+	trx.valueChangedRows = map[*Row]*Row{}
 }
 
 func (trx *Transaction) CreateCommitChangeSet() *structs.CommitChangeSet {
@@ -159,8 +159,8 @@ func (trx *Transaction) ApplyCommitChangeSet(cs *structs.CommitChangeSet, afterL
 		return err
 	}
 
-	for existingRow, touchedRow := range trx.touchedRows {
-		existingRow.commitTouchedRow(trx, touchedRow)
+	for existingRow, valueChangedRow := range trx.valueChangedRows {
+		existingRow.commitValueChangedRow(trx, valueChangedRow)
 	}
 
 	return nil

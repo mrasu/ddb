@@ -36,8 +36,8 @@ func CreateRow(trx *Transaction, t *Table, columns map[string]string) *Row {
 		return r
 	}
 
-	touchedRow := r.ensureTouchedRow(trx, t)
-	touchedRow.columns = columns
+	valueChangedRow := r.ensureValueChangedRow(trx, t)
+	valueChangedRow.columns = columns
 	return r
 }
 
@@ -53,11 +53,11 @@ func (r *Row) Inspect() {
 func (r *Row) Get(trx *Transaction, name string) string {
 	// No need to lock here to get version because transaction will be aborted when version is changed
 	cv := r.version
-	trx.addUsedRow(r, cv)
+	trx.addValueReadRow(r, cv)
 
 	if _, ok := r.changedTransactions[trx]; ok {
-		touchedRow := trx.getTouchedRow(r)
-		return touchedRow.columns[name]
+		valueChangedRow := trx.getValueChangedRow(r)
+		return valueChangedRow.columns[name]
 	} else {
 		return r.columns[name]
 	}
@@ -71,26 +71,26 @@ func (r *Row) GetPrimaryId(trx *Transaction) int64 {
 	return int64(num)
 }
 
-func (r *Row) ensureTouchedRow(trx *Transaction, t *Table) *Row {
+func (r *Row) ensureValueChangedRow(trx *Transaction, t *Table) *Row {
 	_, ok := r.changedTransactions[trx]
 	if !ok {
 		r.changedTransactions[trx] = true
 	}
 
-	touchedRow := trx.getTouchedRow(r)
-	if touchedRow == nil {
+	valueChangedRow := trx.getValueChangedRow(r)
+	if valueChangedRow == nil {
 		c := map[string]string{}
 		for k, v := range r.columns {
 			c[k] = v
 		}
 
-		touchedRow = newEmptyRow(t)
-		touchedRow.isCommittedRow = false
-		touchedRow.columns = c
-		trx.addTouchedRow(r, touchedRow)
+		valueChangedRow = newEmptyRow(t)
+		valueChangedRow.isCommittedRow = false
+		valueChangedRow.columns = c
+		trx.addValueChangedRow(r, valueChangedRow)
 	}
 
-	return touchedRow
+	return valueChangedRow
 }
 
 func (r *Row) Update(trx *Transaction, values map[string]string) error {
@@ -104,14 +104,14 @@ func (r *Row) Update(trx *Transaction, values map[string]string) error {
 		return nil
 	}
 
-	touchedRow := r.ensureTouchedRow(trx, r.table)
-	touchedRow.update(trx, values)
+	valueChangedRow := r.ensureValueChangedRow(trx, r.table)
+	valueChangedRow.update(trx, values)
 	return nil
 }
 
 func (r *Row) update(trx *Transaction, values map[string]string) {
 	if r.isCommittedRow == true {
-		if r.version != trx.usedRows[r] {
+		if r.version != trx.valueReadRows[r] {
 			panic("row version mismatch")
 		}
 	}
@@ -122,17 +122,18 @@ func (r *Row) update(trx *Transaction, values map[string]string) {
 	r.version += 1
 }
 
-func (r *Row) commitTouchedRow(trx *Transaction, touchedRow *Row) {
-	if r.GetPrimaryId(trx) != touchedRow.GetPrimaryId(trx) {
-		panic("row has invalid touchedRow")
+func (r *Row) commitValueChangedRow(trx *Transaction, valueChangedRow *Row) {
+	if r.GetPrimaryId(trx) != valueChangedRow.GetPrimaryId(trx) {
+		panic("row has invalid valueChangedRow")
 	}
 
-	r.update(trx, touchedRow.columns)
+	r.update(trx, valueChangedRow.columns)
+	delete(r.changedTransactions, trx)
 }
 
-func (r *Row) abortTouchedRow(trx *Transaction, touchedRow *Row) {
-	if r.GetPrimaryId(trx) != touchedRow.GetPrimaryId(trx) {
-		panic("row has invalid touchedRow")
+func (r *Row) abortValueChangedRow(trx *Transaction, valueChangedRow *Row) {
+	if r.GetPrimaryId(trx) != valueChangedRow.GetPrimaryId(trx) {
+		panic("row has invalid valueChangedRow")
 	}
 	delete(r.changedTransactions, trx)
 

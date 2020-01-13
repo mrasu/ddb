@@ -41,30 +41,6 @@ func (t *Table) Inspect() {
 	}
 }
 
-func (t *Table) CopyTable() *Table {
-	return &Table{
-		Name:     t.Name,
-		rowMetas: t.CopyRowMetas(),
-		rows:     t.CopyRows(),
-	}
-}
-
-func (t *Table) CopyRowMetas() []*structs.RowMeta {
-	var metas []*structs.RowMeta
-	for _, r := range t.rowMetas {
-		metas = append(metas, r)
-	}
-	return metas
-}
-
-func (t *Table) CopyRows() []*Row {
-	var rows []*Row
-	for _, r := range t.rows {
-		rows = append(rows, r)
-	}
-	return rows
-}
-
 func buildTable(ddl *sqlparser.DDL) (*Table, error) {
 	nn := ddl.NewName
 	var ms []*structs.RowMeta
@@ -291,9 +267,15 @@ func (t *Table) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertCha
 }
 
 func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([]*structs.UpdateChangeSet, error) {
-	rows, err := t.selectWhere(trx, q.Where)
-	if err != nil {
-		return nil, err
+	var rows []*Row
+	if q.Where == nil {
+		rows = t.rows
+	} else {
+		rs, err := t.selectWhere(trx, q.Where)
+		if err != nil {
+			return nil, err
+		}
+		rows = rs
 	}
 
 	var css []*structs.UpdateChangeSet

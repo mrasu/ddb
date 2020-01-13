@@ -2,7 +2,10 @@ package structs
 
 import (
 	"encoding/json"
+	"reflect"
 	"strconv"
+
+	"github.com/pkg/errors"
 )
 
 type QueryType int
@@ -18,6 +21,31 @@ const (
 	Rollback = 920
 	Abort    = 930
 )
+
+var QueryTypeMap = map[int]reflect.Type{
+	CreateDB:    reflect.TypeOf((*CreateDBChangeSet)(nil)),
+	CreateTable: reflect.TypeOf((*CreateTableChangeSet)(nil)),
+	Insert:      reflect.TypeOf((*InsertChangeSet)(nil)),
+	Update:      reflect.TypeOf((*UpdateChangeSet)(nil)),
+
+	Begin:    reflect.TypeOf((*BeginChangeSet)(nil)),
+	Commit:   reflect.TypeOf((*CommitChangeSet)(nil)),
+	Rollback: reflect.TypeOf((*RollbackChangeSet)(nil)),
+	Abort:    reflect.TypeOf((*AbortChangeSet)(nil)),
+}
+
+func ToChangeSet(num int) (ChangeSet, error) {
+	t, ok := QueryTypeMap[num]
+	if !ok {
+		return nil, errors.Errorf("Invalid QueryType number: %d", num)
+	}
+	a := reflect.New(t.Elem())
+	if cs, ok := a.Interface().(ChangeSet); ok {
+		return cs, nil
+	} else {
+		panic("Invalid query is registered to QueryTypeMap")
+	}
+}
 
 var NewLineBytes = []byte("\n")
 var SeparatorBytes = []byte("-")

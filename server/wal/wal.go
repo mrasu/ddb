@@ -166,25 +166,8 @@ func (w *Wal) Read() ([]structs.ChangeSet, error) {
 			return nil, errors.Wrap(err, fmt.Sprintf("Invalid WAL: %s", line))
 		}
 
-		var cs structs.ChangeSet
-		switch num {
-		case structs.CreateDB:
-			cs = &structs.CreateDBChangeSet{}
-		case structs.CreateTable:
-			cs = &structs.CreateTableChangeSet{}
-		case structs.Insert:
-			cs = &structs.InsertChangeSet{}
-		case structs.Update:
-			cs = &structs.UpdateChangeSet{}
-		case structs.Begin:
-			cs = &structs.BeginChangeSet{}
-		case structs.Commit:
-			cs = &structs.CommitChangeSet{}
-		case structs.Rollback:
-			cs = &structs.RollbackChangeSet{}
-		case structs.Abort:
-			cs = &structs.AbortChangeSet{}
-		default:
+		cs, err := structs.ToChangeSet(num)
+		if err != nil {
 			return nil, errors.Errorf("Invalid WAL number: %s", line)
 		}
 

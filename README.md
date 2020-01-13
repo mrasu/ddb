@@ -12,3 +12,4 @@ Dumb RDBMS for my study
 * Index
 * Replication
 * Persist (Distribution, multiple write in one transaction)
+* Multi-tenant (Send tenant-id with SQL and not read other tenant's data)

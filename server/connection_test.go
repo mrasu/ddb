@@ -58,12 +58,12 @@ func TestConnection_Query_CreateTable(t *testing.T) {
 		t.Error("Result contains value")
 	}
 	db := s.databases["hello"]
-	ts := db.CopyTables()
+	ts := data.CopyTables(db)
 	if len(ts) != 1 {
 		t.Errorf("Invalid table size: %d", len(ts))
 	}
 	table := ts[0]
-	rows := table.CopyRows()
+	rows := data.CopyRows(table)
 	if len(rows) != 0 {
 		t.Errorf("Invalid table creation: row size = %d", len(rows))
 	}
@@ -184,7 +184,7 @@ func TestConnection_Query_Commit_AbortAndRetry(t *testing.T) {
 		if !con.currentTransaction.IsImmediate() {
 			t.Error("Transaction is not committed")
 		}
-		rows := s.databases["hello"].CopyTables()[0].CopyRows()
+		rows := data.CopyRows(data.CopyTables(s.databases["hello"])[0])
 		if len(rows) != 1 {
 			t.Errorf("Invalid error record size: %d", len(rows))
 		}
@@ -271,7 +271,7 @@ func TestConnection_Query_Insert(t *testing.T) {
 		t.Errorf("Invalid values size: %d", len(r.Columns))
 	}
 
-	rows := s.databases["hello"].CopyTables()[0].CopyRows()
+	rows := data.CopyRows(data.CopyTables(s.databases["hello"])[0])
 	if len(rows) != 2 {
 		t.Errorf("Invalid row size: %d", len(rows))
 	}
@@ -334,7 +334,7 @@ func TestConnection_Query_Update(t *testing.T) {
 		t.Errorf("Invalid values size: %d", len(r.Columns))
 	}
 
-	rows := s.databases["hello"].CopyTables()[0].CopyRows()
+	rows := data.CopyRows(data.CopyTables(s.databases["hello"])[0])
 	if len(rows) != 2 {
 		t.Errorf("Invalid row size: %d", len(rows))
 	}
@@ -432,7 +432,7 @@ func assertTable(t *testing.T, table *data.Table, eName string, eMetas []*struct
 	if table.Name != eName {
 		t.Errorf("Invalid table name: expected: %s, real: %s", eName, table.Name)
 	}
-	assertRowMetas(t, eName, table.CopyRowMetas(), eMetas)
+	assertRowMetas(t, eName, data.CopyRowMetas(table), eMetas)
 }
 
 func assertRowMetas(t *testing.T, eName string, metas []*structs.RowMeta, eMetas []*structs.RowMeta) {

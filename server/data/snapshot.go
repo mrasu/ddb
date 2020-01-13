@@ -68,13 +68,11 @@ func RecoverSnapshot(dir string) (*Snapshot, error) {
 
 func (ss *Snapshot) Save(dir string) error {
 	bs, err := json.Marshal(ss.data)
-	fmt.Println(string(bs))
 
 	file, err := os.OpenFile(ss.fileName(dir), os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return errors.Wrap(err, "failed to open file")
 	}
-	fmt.Println(file)
 
 	_, err = file.Write(bs)
 	if err != nil {

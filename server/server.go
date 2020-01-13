@@ -30,7 +30,7 @@ func NewServer() (*Server, error) {
 		databases: map[string]*data.Database{},
 		wal:       w,
 
-		transactionHolder: data.NewHolder(),
+		transactionHolder: data.NewTransactionHolder(),
 	}, nil
 }
 
@@ -39,7 +39,7 @@ func NewTestServer(writer io.ReadWriteCloser) (*Server, error) {
 		databases: map[string]*data.Database{},
 		wal:       wal.NewTestWal(writer),
 
-		transactionHolder: data.NewHolder(),
+		transactionHolder: data.NewTransactionHolder(),
 	}, nil
 }
 
