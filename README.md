@@ -5,9 +5,9 @@ Dumb RDBMS for my study
 * Persist to Disk (Wal and Snapshot)
 * Transaction
 * Multiple process (goroutine)
+* Test
 
 # TODO
-* Test
 * Join
 * Index
 * Replication
