@@ -4,17 +4,18 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/xwb1989/sqlparser"
 
 	"github.com/mrasu/ddb/server/data/types"
-	"github.com/mrasu/ddb/server/structs"
 )
 
 func TestNewTableFromChangeSet(t *testing.T) {
-	cs := &structs.CreateTableChangeSet{
+	cs := &pbs.CreateTableChangeSet{
 		DBName: "hello",
 		Name:   "world",
-		RowMetas: []*structs.RowMeta{
+		RowMetas: []*pbs.RowMeta{
 			{Name: "c1", ColumnType: types.VarChar, Length: 20, AllowsNull: true},
 			{Name: "c2", ColumnType: types.VarChar, Length: 10, AllowsNull: false},
 		},
@@ -27,7 +28,7 @@ func TestNewTableFromChangeSet(t *testing.T) {
 	if len(CopyRows(table)) != 0 {
 		t.Errorf("Table has rows")
 	}
-	metas := CopyRowMetas(table)
+	metas := ToPbRowMetas(CopyRowMetas(table))
 	if l := len(metas); l != len(cs.RowMetas) {
 		t.Errorf("Invalid metaRows lengths: %d", l)
 	}
@@ -53,18 +54,18 @@ func TestTable_CreateInsertChangeSets(t *testing.T) {
 	table := createDefaultTable()
 	stmt := ParseSQL(t, "INSERT INTO world(num, text) VALUES(111, 'foo'),(222, 'bar')").(*sqlparser.Insert)
 
-	css, err := table.CreateInsertChangeSets(CreateImmediateTransaction(), stmt)
+	cs, err := table.CreateInsertChangeSets(CreateImmediateTransaction(), stmt)
 	if err != nil {
 		t.Error(err)
 	}
-	if len(css) != 2 {
-		t.Errorf("Invalid changeset size: %d", len(css))
+	if len(cs.Rows) != 2 {
+		t.Errorf("Invalid changeset size: %d", len(cs.Rows))
 	}
 	eRowColumns := []map[string]string{
 		{"id": "3", "num": "111", "text": "foo"},
 		{"id": "4", "num": "222", "text": "bar"},
 	}
-	for i, cs := range css {
+	for i, cs := range cs.Rows {
 		eColumns := eRowColumns[i]
 
 		if len(eColumns) != len(cs.Columns) {
@@ -82,12 +83,12 @@ func TestTable_ApplyInsertChangeSets(t *testing.T) {
 	db := createDefaultDB()
 	table := db.tables["world"]
 
-	css := []*structs.InsertChangeSet{
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"id": "3", "num": "333", "text": "t333"}},
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"id": "4", "num": "444", "text": "t444"}},
+	cs := []*pbs.InsertRow{
+		{Columns: map[string]string{"id": "3", "num": "333", "text": "t333"}},
+		{Columns: map[string]string{"id": "4", "num": "444", "text": "t444"}},
 	}
 
-	err := table.ApplyInsertChangeSets(CreateImmediateTransaction(), css)
+	err := table.ApplyInsertChangeSets(CreateImmediateTransaction(), cs)
 	if err != nil {
 		t.Error(err)
 	}
@@ -105,28 +106,28 @@ func TestTable_CreateUpdateChangeSets(t *testing.T) {
 	table := createDefaultTable()
 	stmt := ParseSQL(t, "UPDATE world SET text = 'foo'").(*sqlparser.Update)
 
-	css, err := table.CreateUpdateChangeSets(CreateImmediateTransaction(), stmt)
+	cs, err := table.CreateUpdateChangeSets(CreateImmediateTransaction(), stmt)
 	if err != nil {
 		t.Error(err)
 	}
-	if len(css) != 2 {
-		t.Errorf("Invalid changeset size: %d", len(css))
+	if len(cs.Rows) != 2 {
+		t.Errorf("Invalid changeset size: %d", len(cs.Rows))
 	}
 	eRowColumns := []map[string]string{
 		{"id": "1", "text": "foo"},
 		{"id": "2", "text": "foo"},
 	}
-	for i, cs := range css {
+	for i, row := range cs.Rows {
 		eColumns := eRowColumns[i]
 
-		if len(eColumns)-1 != len(cs.Columns) {
-			t.Errorf("Invalid columns size. expected: %d, actual: %d", len(eColumns)-1, len(cs.Columns))
+		if len(eColumns)-1 != len(row.Columns) {
+			t.Errorf("Invalid columns size. expected: %d, actual: %d", len(eColumns)-1, len(row.Columns))
 		}
 		eId, _ := strconv.Atoi(eColumns["id"])
-		if cs.PrimaryKeyId != int64(eId) {
-			t.Errorf("Invalid id. expected: %d, actual: %d", eId, cs.PrimaryKeyId)
+		if row.PrimaryKeyId != int64(eId) {
+			t.Errorf("Invalid id. expected: %d, actual: %d", eId, row.PrimaryKeyId)
 		}
-		for cName, cVal := range cs.Columns {
+		for cName, cVal := range row.Columns {
 			if cName == "id" {
 				continue
 			}
@@ -142,12 +143,16 @@ func TestTable_ApplyUpdateChangeSets(t *testing.T) {
 	db := createDefaultDB()
 	table := db.tables["world"]
 
-	css := []*structs.UpdateChangeSet{
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 1},
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 2},
+	cs := &pbs.UpdateChangeSets{
+		DBName:    "hello",
+		TableName: "world",
+		Rows: []*pbs.UpdateRow{
+			{Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 1},
+			{Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 2},
+		},
 	}
 
-	err := table.ApplyUpdateChangeSets(CreateImmediateTransaction(), css)
+	err := table.ApplyUpdateChangeSets(CreateImmediateTransaction(), cs)
 	if err != nil {
 		t.Error(err)
 	}
@@ -160,10 +165,10 @@ func TestTable_ApplyUpdateChangeSets(t *testing.T) {
 }
 
 func createDefaultTable() *Table {
-	cs := &structs.CreateTableChangeSet{
+	cs := &pbs.CreateTableChangeSet{
 		DBName: "hello",
 		Name:   "world",
-		RowMetas: []*structs.RowMeta{
+		RowMetas: []*pbs.RowMeta{
 			{Name: "id", ColumnType: types.AutoIncrementInt, AllowsNull: false},
 			{Name: "num", ColumnType: types.Int, Length: 10, AllowsNull: false},
 			{Name: "text", ColumnType: types.VarChar, Length: 10, AllowsNull: false},

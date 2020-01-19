@@ -1,0 +1,82 @@
+syntax = "proto3";
+package pbs;
+
+message ChangeSet {
+    int64 Lsn = 1;
+
+    oneof Data {
+        CreateDBChangeSet CreateDB = 11;
+        CreateTableChangeSet CreateTable = 100;
+        InsertChangeSets InsertSets = 200;
+        UpdateChangeSets UpdateSets = 210;
+
+        BeginChangeSet Begin = 900;
+        CommitChangeSet Commit = 910;
+        RollbackChangeSet Rollback = 920;
+        AbortChangeSet Abort = 930;
+
+    }
+}
+
+message CreateDBChangeSet {
+    string Name = 1;
+}
+
+message CreateTableChangeSet {
+    string DBName = 1;
+	string Name = 2;
+	repeated RowMeta RowMetas = 3;
+}
+
+// Must be same with the types.ColumnType
+enum ColumnType {
+    Int = 0;
+    AutoIncrementInt = 1;
+    VarChar = 10;
+}
+
+message RowMeta {
+    string Name = 1;
+    ColumnType ColumnType = 2;
+    int64 Length = 3;
+    bool AllowsNull = 4;
+}
+
+message InsertChangeSets {
+    string DBName = 1;
+    string TableName = 2;
+    repeated InsertRow Rows = 3;
+    int64 TransactionNumber = 4;
+}
+
+message InsertRow {
+    map<string, string> Columns = 1;
+}
+
+message UpdateChangeSets {
+    string DBName = 1;
+    string TableName = 2;
+    repeated UpdateRow Rows = 3;
+    int64 TransactionNumber = 4;
+}
+
+message UpdateRow {
+    int64 PrimaryKeyId = 1;
+    map<string, string> Columns = 2;
+}
+
+message BeginChangeSet {
+    int64 Number = 1;
+}
+
+message CommitChangeSet {
+    int64 Number = 1;
+}
+
+message RollbackChangeSet {
+    int64 Number = 1;
+}
+
+message AbortChangeSet {
+    int64 Number = 1;
+}

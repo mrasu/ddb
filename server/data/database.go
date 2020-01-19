@@ -3,6 +3,8 @@ package data
 import (
 	"fmt"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/mrasu/ddb/server/structs"
 	"github.com/pkg/errors"
 	"github.com/xwb1989/sqlparser"
@@ -13,7 +15,7 @@ type Database struct {
 	tables map[string]*Table
 }
 
-func NewDatabaseFromChangeSet(cs *structs.CreateDBChangeSet) (*Database, error) {
+func NewDatabaseFromChangeSet(cs *pbs.CreateDBChangeSet) (*Database, error) {
 	db := &Database{
 		tables: map[string]*Table{},
 		Name:   cs.Name,
@@ -47,7 +49,7 @@ func (db *Database) MakeCreateTableChangeSet(ddl *sqlparser.DDL) (*structs.Creat
 	return cs, nil
 }
 
-func (db *Database) ApplyCreateTableChangeSet(cs *structs.CreateTableChangeSet) error {
+func (db *Database) ApplyCreateTableChangeSet(cs *pbs.CreateTableChangeSet) error {
 	if db.Name != cs.DBName {
 		return errors.Errorf("Database doesn't exist: %s", cs.DBName)
 	}
@@ -79,75 +81,60 @@ func (db *Database) JoinRows(trx *Transaction, j sqlparser.JoinCondition, leftRo
 	return res, nil
 }
 
-func (db *Database) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
+func (db *Database) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) (*pbs.InsertChangeSets, error) {
 	t, err := db.getTable(q.Table.Name.String())
 	if err != nil {
 		return nil, err
 	}
-	css, err := t.CreateInsertChangeSets(trx, q)
+	cs, err := t.CreateInsertChangeSets(trx, q)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, cs := range css {
-		cs.DBName = db.Name
-	}
-	return css, err
+	cs.DBName = db.Name
+	return cs, err
 }
 
-func (db *Database) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertChangeSet) error {
-	if len(css) == 0 {
+func (db *Database) ApplyInsertChangeSets(trx *Transaction, cs *pbs.InsertChangeSets) error {
+	if len(cs.Rows) == 0 {
 		return nil
 	}
 
-	tName := css[0].TableName
-	for _, cs := range css {
-		if tName != cs.TableName {
-			return errors.New("InsertChangeSet holds different tables")
-		}
-	}
+	tName := cs.TableName
 	t, ok := db.tables[tName]
 	if !ok {
 		return errors.Errorf("table doesn't exist: %s", tName)
 	}
 
-	return t.ApplyInsertChangeSets(trx, css)
+	return t.ApplyInsertChangeSets(trx, cs.Rows)
 }
 
-func (db *Database) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update, tName string) ([]*structs.UpdateChangeSet, error) {
+func (db *Database) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update, tName string) (*pbs.UpdateChangeSets, error) {
 	t, err := db.getTable(tName)
 	if err != nil {
 		return nil, err
 	}
 
-	css, err := t.CreateUpdateChangeSets(trx, q)
+	cs, err := t.CreateUpdateChangeSets(trx, q)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, cs := range css {
-		cs.DBName = db.Name
-	}
-	return css, nil
+	cs.DBName = db.Name
+	return cs, nil
 }
 
-func (db *Database) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateChangeSet) error {
-	if len(css) == 0 {
+func (db *Database) ApplyUpdateChangeSets(trx *Transaction, cs *pbs.UpdateChangeSets) error {
+	if len(cs.Rows) == 0 {
 		return nil
 	}
 
-	tName := css[0].TableName
-	for _, cs := range css {
-		if tName != cs.TableName {
-			return errors.New("UpdateChangeSet holds different tables")
-		}
-	}
-
+	tName := cs.TableName
 	t, err := db.getTable(tName)
 	if err != nil {
 		return err
 	}
-	return t.ApplyUpdateChangeSets(trx, css)
+	return t.ApplyUpdateChangeSets(trx, cs)
 }
 
 func (db *Database) getTable(tName string) (*Table, error) {

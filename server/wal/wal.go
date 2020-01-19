@@ -20,7 +20,7 @@ type Wal struct {
 	dir        string
 	prefix     string
 	fileNumber int
-	lsn        int
+	lsn        int64
 
 	// TODO: DI
 	testReadWriter io.ReadWriteCloser
@@ -50,7 +50,7 @@ func NewTestWal(writer io.ReadWriteCloser) *Wal {
 	}
 }
 
-func (w *Wal) CurrentLsn() int {
+func (w *Wal) CurrentLsn() int64 {
 	return w.lsn
 }
 
@@ -118,11 +118,11 @@ func (w *Wal) writeFile(bs []byte) error {
 	return nil
 }
 
-func (w *Wal) ProceedLsn(p int) {
+func (w *Wal) ProceedLsn(p int64) {
 	w.lsn += p
 }
 
-func (w *Wal) SetLsn(l int) {
+func (w *Wal) SetLsn(l int64) {
 	w.lsn = l
 }
 
@@ -166,7 +166,7 @@ func (w *Wal) Read() ([]structs.ChangeSet, error) {
 			return nil, errors.Wrap(err, fmt.Sprintf("Invalid WAL: %s", line))
 		}
 
-		cs, err := structs.ToChangeSet(num)
+		cs, err := structs.ToChangeSet(int32(num))
 		if err != nil {
 			return nil, errors.Errorf("Invalid WAL number: %s", line)
 		}

@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/gogo/protobuf/jsonpb"
+
+	"github.com/golang/protobuf/proto"
 	"github.com/mrasu/ddb/server"
+	"github.com/mrasu/ddb/server/pbs"
 	"github.com/rs/zerolog"
 )
 
@@ -18,7 +24,44 @@ func main() {
 	if err != nil {
 		die(err)
 	}
+	raft(s)
+}
 
+func raft(s *server.Server) {
+	rs := server.StartRaftServer(s, 1)
+	time.Sleep(2 * time.Second)
+
+	fmt.Println("Proposing")
+
+	cs := &pbs.ChangeSet{
+		Lsn:  1,
+		Data: &pbs.ChangeSet_CreateDB{CreateDB: &pbs.CreateDBChangeSet{Name: "hello"}},
+	}
+	out, err := proto.Marshal(cs)
+	if err != nil {
+		panic(err)
+	}
+
+	ctx := context.Background()
+	ctx2, _ := context.WithTimeout(ctx, 1*time.Second)
+	err = rs.Propose(ctx2, out)
+	if err != nil {
+		fmt.Printf("ERROR: %+v\n", err)
+	}
+	fmt.Println("END!")
+	m := jsonpb.Marshaler{}
+	var buf bytes.Buffer
+	if err = m.Marshal(&buf, cs.GetCreateDB()); err != nil {
+		panic(err)
+	}
+	fmt.Println(buf.String())
+
+	time.Sleep(3 * time.Second)
+
+	s.Inspect()
+}
+
+func smoke(s *server.Server) {
 	exists, err := s.WalExists()
 	if err != nil {
 		die(err)

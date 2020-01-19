@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/xwb1989/sqlparser"
 
 	"github.com/mrasu/ddb/server/structs"
@@ -84,68 +86,126 @@ func (s *Server) RecoverFromWal() error {
 			continue
 		}
 
+		var pbcs *pbs.ChangeSet
 		switch c := cs.(type) {
 		case *structs.CreateDBChangeSet:
-			err = s.applyCreateDBChangeSet(c)
+			pbcs = toPbCreateDatabase(c)
 		case *structs.CreateTableChangeSet:
-			db := s.databases[c.DBName]
-			err = db.ApplyCreateTableChangeSet(c)
+			pbcs = toPbCreateTable(c)
 		case *structs.InsertChangeSet:
-			db := s.databases[c.DBName]
-			trx := s.transactionHolder.Get(c.TransactionNumber)
-			if trx == nil {
-				panic(fmt.Sprintf("found not started transaction: %d", c.TransactionNumber))
-			}
-			err = db.ApplyInsertChangeSets(trx, []*structs.InsertChangeSet{c})
+			pbcs = toPBInsertChangeSets(c)
 		case *structs.UpdateChangeSet:
-			db := s.databases[c.DBName]
-			trx := s.transactionHolder.Get(c.TransactionNumber)
-			if trx == nil {
-				panic(fmt.Sprintf("found not started transaction: %d", c.TransactionNumber))
-			}
-			err = db.ApplyUpdateChangeSets(trx, []*structs.UpdateChangeSet{c})
+			pbcs = toPBUpdateChangeSets(c)
 		case *structs.BeginChangeSet:
-			trx := data.StartNewTransaction()
-			trx.Number = c.Number
-			ok := s.transactionHolder.Add(trx)
-			if !ok {
-				panic("invalid 'BEGIN' change set")
-			}
+			pbcs = toPBBeginChangeSets(c)
 		case *structs.CommitChangeSet:
-			trx := s.transactionHolder.Get(c.Number)
-			if trx == nil {
-				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
-			}
-			err = trx.ApplyCommitChangeSet(c, func(set *structs.CommitChangeSet) error {
-				return nil
-			})
+			pbcs = toPBCommitChangeSets(c)
 		case *structs.RollbackChangeSet:
-			trx := s.transactionHolder.Get(c.Number)
-			if trx == nil {
-				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
-			}
-			trx.ApplyRollbackChangeSet(c)
+			pbcs = toPBRollbackChangeSets(c)
 		case *structs.AbortChangeSet:
-			trx := s.transactionHolder.Get(c.Number)
-			if trx == nil {
-				panic(fmt.Sprintf("found not started transaction: %d", c.Number))
-			}
-			trx.ApplyAbortChangeSet(c)
+			pbcs = toPBAbortChangeSets(c)
 		default:
 			return errors.Errorf("Not supported ChangeSet: %s", c)
 		}
 
+		err = s.ApplyChangeSet(pbcs, false)
 		if err != nil {
 			return err
 		}
 	}
 
-	s.wal.ProceedLsn(len(css))
+	s.wal.ProceedLsn(int64(len(css)))
 
 	return nil
 }
 
-func (s *Server) applyCreateDBChangeSet(cs *structs.CreateDBChangeSet) error {
+func (s *Server) ApplyChangeSet(cs *pbs.ChangeSet, writesWal bool) error {
+	if writesWal {
+		if _, ok := cs.Data.(*pbs.ChangeSet_Commit); ok {
+			// write log later
+		} else {
+			css := toStructsChangeSets(cs)
+			err := s.wal.WriteSlice(css)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		start := s.wal.CurrentLsn()
+		if cs.Lsn < start {
+			return errors.Errorf("received past wal number. current:%d, lsn: %d", start, cs.Lsn)
+		}
+	}
+
+	var err error
+	switch c := cs.Data.(type) {
+	case *pbs.ChangeSet_CreateDB:
+		err = s.applyCreateDBChangeSet(c.CreateDB)
+	case *pbs.ChangeSet_CreateTable:
+		db := s.databases[c.CreateTable.DBName]
+		err = db.ApplyCreateTableChangeSet(c.CreateTable)
+	case *pbs.ChangeSet_InsertSets:
+		db := s.databases[c.InsertSets.DBName]
+		trx := s.transactionHolder.Get(c.InsertSets.TransactionNumber)
+		if trx == nil {
+			panic(fmt.Sprintf("found not started transaction: %d", c.InsertSets.TransactionNumber))
+		}
+		err = db.ApplyInsertChangeSets(trx, c.InsertSets)
+	case *pbs.ChangeSet_UpdateSets:
+		db := s.databases[c.UpdateSets.DBName]
+		trx := s.transactionHolder.Get(c.UpdateSets.TransactionNumber)
+		if trx == nil {
+			panic(fmt.Sprintf("found not started transaction: %d", c.UpdateSets.TransactionNumber))
+		}
+		err = db.ApplyUpdateChangeSets(trx, c.UpdateSets)
+	case *pbs.ChangeSet_Begin:
+		trx := data.StartNewTransaction()
+		trx.Number = c.Begin.Number
+		ok := s.transactionHolder.Add(trx)
+		if !ok {
+			panic("invalid 'BEGIN' change set")
+		}
+		trx.ApplyBeginChangeSet(c.Begin)
+	case *pbs.ChangeSet_Commit:
+		trx := s.transactionHolder.Get(c.Commit.Number)
+		if trx == nil {
+			panic(fmt.Sprintf("found not started transaction: %d", c.Commit.Number))
+		}
+		err = trx.ApplyCommitChangeSet(c.Commit, func(set *pbs.CommitChangeSet) error {
+			if writesWal {
+				scs := &pbs.ChangeSet{Data: &pbs.ChangeSet_Commit{Commit: set}}
+				css := toStructsChangeSets(scs)
+				return s.wal.WriteSlice(css)
+			} else {
+				return nil
+			}
+		})
+	case *pbs.ChangeSet_Rollback:
+		trx := s.transactionHolder.Get(c.Rollback.Number)
+		if trx == nil {
+			panic(fmt.Sprintf("found not started transaction: %d", c.Rollback.Number))
+		}
+		trx.ApplyRollbackChangeSet(c.Rollback)
+	case *pbs.ChangeSet_Abort:
+		trx := s.transactionHolder.Get(c.Abort.Number)
+		if trx == nil {
+			panic(fmt.Sprintf("found not started transaction: %d", c.Abort.Number))
+		}
+		trx.ApplyAbortChangeSet(c.Abort)
+	default:
+		return errors.Errorf("Not supported ChangeSet: %s", c)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	s.wal.ProceedLsn(1)
+
+	return nil
+}
+
+func (s *Server) applyCreateDBChangeSet(cs *pbs.CreateDBChangeSet) error {
 	db, err := data.NewDatabaseFromChangeSet(cs)
 	if err != nil {
 		return err
@@ -175,11 +235,7 @@ func (s *Server) createDatabase(dbddl *sqlparser.DBDDL) error {
 	}
 
 	cs := &structs.CreateDBChangeSet{Name: name}
-	err := s.wal.Write(cs)
-	if err != nil {
-		return err
-	}
-	return s.applyCreateDBChangeSet(cs)
+	return s.ApplyChangeSet(toPbCreateDatabase(cs), true)
 }
 
 func (s *Server) runDDL(ddl *sqlparser.DDL) error {
@@ -193,12 +249,8 @@ func (s *Server) runDDL(ddl *sqlparser.DDL) error {
 		if err != nil {
 			return err
 		}
-
-		err = s.wal.Write(cs)
-		if err != nil {
-			return err
-		}
-		return db.ApplyCreateTableChangeSet(cs)
+		pbcs := toPbCreateTable(cs)
+		return s.ApplyChangeSet(pbcs, true)
 	} else {
 		return errors.Errorf("Not supported query: %s", ddl.Action)
 	}

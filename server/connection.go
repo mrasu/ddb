@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/mrasu/ddb/server/data"
 	"github.com/mrasu/ddb/server/structs"
 	"github.com/pkg/errors"
@@ -96,29 +98,15 @@ func (c *Connection) insert(q *sqlparser.Insert) error {
 	if !ok {
 		return errors.Errorf("Database doesn't exist: %s", q.Table.Qualifier.String())
 	}
-	css, err := db.CreateInsertChangeSets(c.currentTransaction, q)
+	cs, err := db.CreateInsertChangeSets(c.currentTransaction, q)
 	if err != nil {
 		return err
 	}
-	if len(css) == 0 {
+	if len(cs.Rows) == 0 {
 		return nil
 	}
-
-	var css2 []structs.ChangeSet
-	for _, cs := range css {
-		css2 = append(css2, cs)
-	}
-	err = c.server.wal.WriteSlice(css2)
-	if err != nil {
-		return err
-	}
-
-	trx := c.server.transactionHolder.Get(css[0].TransactionNumber)
-	if trx == nil {
-		panic("invalid transaction number")
-	}
-
-	return db.ApplyInsertChangeSets(trx, css)
+	pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_InsertSets{InsertSets: cs}}
+	return c.server.ApplyChangeSet(pbcs, true)
 }
 
 func (c *Connection) update(q *sqlparser.Update) error {
@@ -147,54 +135,40 @@ func (c *Connection) update(q *sqlparser.Update) error {
 }
 
 func (c *Connection) updateTable(q *sqlparser.Update, db *data.Database, tName string) error {
-	css, err := db.CreateUpdateChangeSets(c.currentTransaction, q, tName)
+	cs, err := db.CreateUpdateChangeSets(c.currentTransaction, q, tName)
 	if err != nil {
 		return err
 	}
-	if len(css) == 0 {
+	if len(cs.Rows) == 0 {
 		return nil
 	}
 
-	var css2 []structs.ChangeSet
-	for _, cs := range css {
-		css2 = append(css2, cs)
-	}
-	err = c.server.wal.WriteSlice(css2)
-	if err != nil {
-		return err
-	}
-
-	trx := c.server.transactionHolder.Get(css[0].TransactionNumber)
-	if trx == nil {
-		panic("invalid transaction number")
-	}
-
-	return db.ApplyUpdateChangeSets(trx, css)
+	pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_UpdateSets{UpdateSets: cs}}
+	return c.server.ApplyChangeSet(pbcs, true)
 }
 
 func (c *Connection) begin() error {
 	trx := data.StartNewTransaction()
-	c.currentTransaction = trx
 
 	cs := trx.CreateBeginChangeSet()
-	err := c.server.wal.Write(cs)
+	pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_Begin{Begin: cs}}
+	err := c.server.ApplyChangeSet(pbcs, true)
 	if err != nil {
 		return err
 	}
 
-	trx.ApplyBeginChangeSet(cs)
-	c.server.transactionHolder.Add(trx)
+	c.currentTransaction = c.server.transactionHolder.Get(trx.Number)
 	return nil
 }
 
 func (c *Connection) rollback() error {
 	if c.currentTransaction != nil {
 		cs := c.currentTransaction.CreateRollbackChangeSet()
-		err := c.server.wal.Write(cs)
+		pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_Rollback{Rollback: cs}}
+		err := c.server.ApplyChangeSet(pbcs, true)
 		if err != nil {
 			return err
 		}
-		c.currentTransaction.ApplyRollbackChangeSet(cs)
 	}
 	c.currentTransaction = c.immediateTransaction
 	return nil
@@ -203,9 +177,8 @@ func (c *Connection) rollback() error {
 func (c *Connection) commit() error {
 	if c.currentTransaction != nil {
 		cs := c.currentTransaction.CreateCommitChangeSet()
-		err := c.currentTransaction.ApplyCommitChangeSet(cs, func(cs *structs.CommitChangeSet) error {
-			return c.server.wal.Write(cs)
-		})
+		pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_Commit{Commit: cs}}
+		err := c.server.ApplyChangeSet(pbcs, true)
 		if err != nil {
 			return err
 		}
@@ -216,12 +189,8 @@ func (c *Connection) commit() error {
 
 func (c *Connection) abort() error {
 	cs := c.currentTransaction.CreateAbortChangeSet()
-	err := c.server.wal.Write(cs)
-	if err != nil {
-		return err
-	}
-	c.currentTransaction.ApplyAbortChangeSet(cs)
-	return nil
+	pbcs := &pbs.ChangeSet{Data: &pbs.ChangeSet_Abort{Abort: cs}}
+	return c.server.ApplyChangeSet(pbcs, true)
 }
 
 func (c *Connection) retryTransaction() error {

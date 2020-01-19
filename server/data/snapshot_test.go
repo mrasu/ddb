@@ -11,7 +11,7 @@ func TestTakeSnapshot(t *testing.T) {
 	db := createDefaultDB()
 
 	s := TakeSnapshot(100, []*Database{db})
-	thelper.AssertInt(t, "Invalid lsn", 100, s.data.Lsn)
+	thelper.AssertInt64(t, "Invalid lsn", 100, s.data.Lsn)
 	assertSnapshot(t, s, db, "world")
 }
 
@@ -25,7 +25,7 @@ func TestRecoverSnapshot(t *testing.T) {
 	s2, err := RecoverSnapshot("/tmp")
 	thelper.AssertNoError(t, err)
 
-	thelper.AssertInt(t, "Invalid lsn", 100, s2.data.Lsn)
+	thelper.AssertInt64(t, "Invalid lsn", 100, s2.data.Lsn)
 	assertSnapshot(t, s2, db, "world")
 }
 

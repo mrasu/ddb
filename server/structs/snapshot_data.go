@@ -1,7 +1,7 @@
 package structs
 
 type SData struct {
-	Lsn       int          `json:"lsn"`
+	Lsn       int64        `json:"lsn"`
 	Databases []*SDatabase `json:"databases"`
 }
 

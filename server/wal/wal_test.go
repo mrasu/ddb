@@ -102,17 +102,17 @@ func TestWal_WriteSlice(t *testing.T) {
 }
 
 func TestWal_Read(t *testing.T) {
-	var sets []structs.ChangeSet
+	var Rows []structs.ChangeSet
 	for num := range structs.QueryTypeMap {
 		cs, err := structs.ToChangeSet(num)
 		if err != nil {
 			t.Error(err)
 		}
-		sets = append(sets, cs)
+		Rows = append(Rows, cs)
 	}
 	w := NewTestWal(&Memory{})
 
-	err := w.WriteSlice(sets)
+	err := w.WriteSlice(Rows)
 	if err != nil {
 		t.Error(err)
 	}
@@ -121,17 +121,17 @@ func TestWal_Read(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if len(css) != len(sets) && len(sets) > 0 {
+	if len(css) != len(Rows) && len(Rows) > 0 {
 		t.Errorf("Saving invalid wal size: %d", len(css))
 	}
 
 	for i, cs := range css {
-		eCs := sets[i]
+		eCs := Rows[i]
 		if reflect.TypeOf(cs) != reflect.TypeOf(eCs) {
 			t.Errorf("Invalid type record: %T, %T", cs, eCs)
 		}
 
-		if cs.GetLsn() != i {
+		if cs.GetLsn() != int64(i) {
 			t.Errorf("Invalid lsn: %v", cs)
 		}
 	}
@@ -154,7 +154,7 @@ func assertDBChangeSets(t *testing.T, w *Wal, eCss []*structs.CreateDBChangeSet)
 		if dcs.Name != eCs.Name {
 			t.Errorf("Invalid ChangeSet content: %v", cs)
 		}
-		if dcs.Lsn != i {
+		if dcs.Lsn != int64(i) {
 			t.Errorf("Invalid lsn: %v", cs)
 		}
 	}

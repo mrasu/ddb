@@ -1,9 +1,9 @@
 package types
 
-type ColumnType int
+type ColumnType int32
 
 const (
-	Int              = 1
-	AutoIncrementInt = 2
+	Int              = 0
+	AutoIncrementInt = 1
 	VarChar          = 10
 )

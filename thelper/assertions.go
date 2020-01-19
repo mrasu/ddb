@@ -16,6 +16,13 @@ func AssertInt(t *testing.T, message string, expected, actual int) {
 	}
 }
 
+func AssertInt64(t *testing.T, message string, expected, actual int64) {
+	t.Helper()
+	if expected != actual {
+		t.Errorf("%s. expected: %d, actual: %d", message, expected, actual)
+	}
+}
+
 func AssertBool(t *testing.T, message string, expected, actual bool) {
 	t.Helper()
 	if expected != actual {

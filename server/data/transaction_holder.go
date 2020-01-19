@@ -1,11 +1,11 @@
 package data
 
 type TransactionHolder struct {
-	transactionMap map[int]*Transaction
+	transactionMap map[int64]*Transaction
 }
 
 func NewTransactionHolder() *TransactionHolder {
-	return &TransactionHolder{transactionMap: map[int]*Transaction{}}
+	return &TransactionHolder{transactionMap: map[int64]*Transaction{}}
 }
 
 func (h *TransactionHolder) Add(trx *Transaction) bool {
@@ -16,7 +16,7 @@ func (h *TransactionHolder) Add(trx *Transaction) bool {
 	return true
 }
 
-func (h *TransactionHolder) Get(num int) *Transaction {
+func (h *TransactionHolder) Get(num int64) *Transaction {
 	if num == -1 {
 		return CreateImmediateTransaction()
 	}

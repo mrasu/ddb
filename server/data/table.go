@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/mrasu/ddb/server/data/types"
 	"github.com/mrasu/ddb/server/structs"
 	"github.com/pkg/errors"
@@ -72,10 +74,38 @@ func buildTable(ddl *sqlparser.DDL) (*Table, error) {
 	return t, nil
 }
 
-func NewTableFromChangeSet(cs *structs.CreateTableChangeSet) *Table {
+func NewTableFromChangeSet(cs *pbs.CreateTableChangeSet) *Table {
 	t := newEmtpyTable(cs.Name)
-	t.rowMetas = cs.RowMetas
+	t.rowMetas = ToRowMetas(cs.RowMetas)
 	return t
+}
+
+func ToRowMetas(metas []*pbs.RowMeta) []*structs.RowMeta {
+	var res []*structs.RowMeta
+	for _, m := range metas {
+		res = append(res, &structs.RowMeta{
+			Name:       m.Name,
+			ColumnType: types.ColumnType(m.ColumnType),
+			Length:     m.Length,
+			AllowsNull: m.AllowsNull,
+		})
+	}
+
+	return res
+}
+
+func ToPbRowMetas(metas []*structs.RowMeta) []*pbs.RowMeta {
+	var res []*pbs.RowMeta
+	for _, m := range metas {
+		res = append(res, &pbs.RowMeta{
+			Name:       m.Name,
+			ColumnType: pbs.ColumnType(m.ColumnType),
+			Length:     m.Length,
+			AllowsNull: m.AllowsNull,
+		})
+	}
+
+	return res
 }
 
 func newEmtpyTable(name string) *Table {
@@ -96,7 +126,7 @@ func (t *Table) containsColumn(colName string) bool {
 	return false
 }
 
-func (t *Table) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([]*structs.InsertChangeSet, error) {
+func (t *Table) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) (*pbs.InsertChangeSets, error) {
 	switch rows := q.Rows.(type) {
 	case sqlparser.Values:
 		cs, err := t.makeInsertChangeSet(trx, q.Columns, rows)
@@ -109,13 +139,17 @@ func (t *Table) CreateInsertChangeSets(trx *Transaction, q *sqlparser.Insert) ([
 	}
 }
 
-func (t *Table) makeInsertChangeSet(trx *Transaction, iColumns sqlparser.Columns, values sqlparser.Values) ([]*structs.InsertChangeSet, error) {
+func (t *Table) makeInsertChangeSet(trx *Transaction, iColumns sqlparser.Columns, values sqlparser.Values) (*pbs.InsertChangeSets, error) {
 	columns := map[string]*structs.RowMeta{}
 	for _, c := range t.rowMetas {
 		columns[c.Name] = c
 	}
 
-	var css []*structs.InsertChangeSet
+	cs := &pbs.InsertChangeSets{
+		TableName:         t.Name,
+		Rows:              []*pbs.InsertRow{},
+		TransactionNumber: trx.Number,
+	}
 	lastAutoIncVals := map[string]int64{}
 
 	for _, rowValues := range values {
@@ -155,21 +189,19 @@ func (t *Table) makeInsertChangeSet(trx *Transaction, iColumns sqlparser.Columns
 				lastAutoIncVals[c.Name] = v
 			}
 		}
-		r := &structs.InsertChangeSet{
-			TableName:         t.Name,
-			Columns:           data,
-			TransactionNumber: trx.Number,
+		r := &pbs.InsertRow{
+			Columns: data,
 		}
-		css = append(css, r)
+		cs.Rows = append(cs.Rows, r)
 	}
 
-	return css, nil
+	return cs, nil
 }
 
-func (t *Table) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertChangeSet) error {
+func (t *Table) ApplyInsertChangeSets(trx *Transaction, iRows []*pbs.InsertRow) error {
 	var rows []*Row
-	for _, cs := range css {
-		r := CreateRow(trx, t, cs.Columns)
+	for _, row := range iRows {
+		r := CreateRow(trx, t, row.Columns)
 		rows = append(rows, r)
 	}
 
@@ -177,7 +209,7 @@ func (t *Table) ApplyInsertChangeSets(trx *Transaction, css []*structs.InsertCha
 	return nil
 }
 
-func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([]*structs.UpdateChangeSet, error) {
+func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) (*pbs.UpdateChangeSets, error) {
 	var rows []*Row
 	if q.Where == nil {
 		rows = t.rows
@@ -195,7 +227,7 @@ func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([
 		}
 	}
 
-	var css []*structs.UpdateChangeSet
+	var updateRows []*pbs.UpdateRow
 	for _, row := range rows {
 		cols := map[string]string{}
 		for _, expr := range q.Exprs {
@@ -213,17 +245,19 @@ func (t *Table) CreateUpdateChangeSets(trx *Transaction, q *sqlparser.Update) ([
 				return nil, errors.Errorf("not supported expression")
 			}
 		}
-		cs := &structs.UpdateChangeSet{
-			TableName:    t.Name,
+
+		updateRows = append(updateRows, &pbs.UpdateRow{
 			PrimaryKeyId: row.GetPrimaryId(trx),
 			Columns:      cols,
-
-			TransactionNumber: trx.Number,
-		}
-		css = append(css, cs)
+		})
 	}
 
-	return css, nil
+	cs := &pbs.UpdateChangeSets{
+		TableName:         t.Name,
+		TransactionNumber: trx.Number,
+		Rows:              updateRows,
+	}
+	return cs, nil
 }
 
 func (t *Table) calcBinaryUpdate(trx *Transaction, colName string, r *Row, q *sqlparser.BinaryExpr) (string, error) {
@@ -281,13 +315,13 @@ func (t *Table) calcBinaryUpdate(trx *Transaction, colName string, r *Row, q *sq
 	return "", errors.Errorf("No column: %s", colName)
 }
 
-func (t *Table) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateChangeSet) error {
+func (t *Table) ApplyUpdateChangeSets(trx *Transaction, cs *pbs.UpdateChangeSets) error {
 	// TODO: O(N*M)
-	for _, cs := range css {
+	for _, row := range cs.Rows {
 		found := false
 		for _, r := range t.rows {
-			if r.GetPrimaryId(trx) == cs.PrimaryKeyId {
-				err := r.Update(trx, cs.Columns)
+			if r.GetPrimaryId(trx) == row.PrimaryKeyId {
+				err := r.Update(trx, row.Columns)
 				if err != nil {
 					return err
 				}
@@ -297,7 +331,7 @@ func (t *Table) ApplyUpdateChangeSets(trx *Transaction, css []*structs.UpdateCha
 		}
 
 		if !found {
-			return errors.Errorf("no row found for UPDATE: %s.%s(PK: %d)", cs.DBName, cs.TableName, cs.PrimaryKeyId)
+			return errors.Errorf("no row found for UPDATE: %s.%s(PK: %d)", cs.DBName, cs.TableName, row.PrimaryKeyId)
 		}
 	}
 	return nil

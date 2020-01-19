@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/mrasu/ddb/server/pbs"
+
 	"github.com/mrasu/ddb/server/data/types"
 
 	"github.com/mrasu/ddb/thelper"
@@ -15,7 +17,7 @@ import (
 )
 
 func TestNewDatabaseFromChangeSet(t *testing.T) {
-	cs := &structs.CreateDBChangeSet{
+	cs := &pbs.CreateDBChangeSet{
 		Name: "hello",
 	}
 	db, err := NewDatabaseFromChangeSet(cs)
@@ -53,10 +55,10 @@ func TestDatabase_MakeCreateTableChangeSet(t *testing.T) {
 }
 
 func TestDatabase_ApplyCreateTableChangeSet(t *testing.T) {
-	cs := &structs.CreateTableChangeSet{
+	cs := &pbs.CreateTableChangeSet{
 		DBName:   "hello",
 		Name:     "world2",
-		RowMetas: []*structs.RowMeta{{Name: "c1", ColumnType: types.VarChar, Length: 10, AllowsNull: true}},
+		RowMetas: []*pbs.RowMeta{{Name: "c1", ColumnType: types.VarChar, Length: 10, AllowsNull: true}},
 	}
 
 	db := createDefaultDB()
@@ -81,15 +83,15 @@ func TestDatabase_CreateInsertChangeSets(t *testing.T) {
 	db := createDefaultDB()
 	stmt := ParseSQL(t, "INSERT INTO world(num, text) VALUES(111, 'foo'),(222, 'bar')").(*sqlparser.Insert)
 
-	css, err := db.CreateInsertChangeSets(CreateImmediateTransaction(), stmt)
+	cs, err := db.CreateInsertChangeSets(CreateImmediateTransaction(), stmt)
 	thelper.AssertNoError(t, err)
-	thelper.AssertInt(t, "Invalid ChangeSet size", 2, len(css))
+	thelper.AssertInt(t, "Invalid ChangeSet size", 2, len(cs.Rows))
 
 	eRowColumns := []map[string]string{
 		{"id": "3", "num": "111", "text": "foo"},
 		{"id": "4", "num": "222", "text": "bar"},
 	}
-	for i, cs := range css {
+	for i, cs := range cs.Rows {
 		eColumns := eRowColumns[i]
 		thelper.AssertInt(t, "Invalid columns size", len(eColumns), len(cs.Columns))
 
@@ -102,12 +104,16 @@ func TestDatabase_CreateInsertChangeSets(t *testing.T) {
 func TestDatabase_ApplyInsertChangeSet(t *testing.T) {
 	db := createDefaultDB()
 
-	css := []*structs.InsertChangeSet{
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"id": "3", "num": "333", "text": "t333"}},
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"id": "4", "num": "444", "text": "t444"}},
+	cs := &pbs.InsertChangeSets{
+		DBName:    "hello",
+		TableName: "world",
+		Rows: []*pbs.InsertRow{
+			{Columns: map[string]string{"id": "3", "num": "333", "text": "t333"}},
+			{Columns: map[string]string{"id": "4", "num": "444", "text": "t444"}},
+		},
 	}
 
-	err := db.ApplyInsertChangeSets(CreateImmediateTransaction(), css)
+	err := db.ApplyInsertChangeSets(CreateImmediateTransaction(), cs)
 	thelper.AssertNoError(t, err)
 
 	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})
@@ -124,20 +130,20 @@ func TestDatabase_CreateUpdateChangeSets(t *testing.T) {
 	db := createDefaultDB()
 	stmt := ParseSQL(t, "UPDATE world SET text = 'foo'").(*sqlparser.Update)
 
-	css, err := db.CreateUpdateChangeSets(CreateImmediateTransaction(), stmt, "world")
+	cs, err := db.CreateUpdateChangeSets(CreateImmediateTransaction(), stmt, "world")
 	thelper.AssertNoError(t, err)
-	thelper.AssertInt(t, "Invalid changeset size", 2, len(css))
+	thelper.AssertInt(t, "Invalid changeset size", 2, len(cs.Rows))
 	eRowColumns := []map[string]string{
 		{"id": "1", "text": "foo"},
 		{"id": "2", "text": "foo"},
 	}
-	for i, cs := range css {
+	for i, row := range cs.Rows {
 		eColumns := eRowColumns[i]
 
-		thelper.AssertInt(t, "Invalid columns size", len(eColumns)-1, len(cs.Columns))
+		thelper.AssertInt(t, "Invalid columns size", len(eColumns)-1, len(row.Columns))
 		eId, _ := strconv.Atoi(eColumns["id"])
-		thelper.AssertInt(t, "Invalid id", eId, int(cs.PrimaryKeyId))
-		for cName, cVal := range cs.Columns {
+		thelper.AssertInt(t, "Invalid id", eId, int(row.PrimaryKeyId))
+		for cName, cVal := range row.Columns {
 			if cName == "id" {
 				continue
 			}
@@ -150,12 +156,16 @@ func TestDatabase_CreateUpdateChangeSets(t *testing.T) {
 func TestDatabase_ApplyUpdateChangeSets(t *testing.T) {
 	db := createDefaultDB()
 
-	css := []*structs.UpdateChangeSet{
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 1},
-		{Lsn: 1, DBName: "hello", TableName: "world", Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 2},
+	cs := &pbs.UpdateChangeSets{
+		DBName:    "hello",
+		TableName: "world",
+		Rows: []*pbs.UpdateRow{
+			{Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 1},
+			{Columns: map[string]string{"text": "foo"}, PrimaryKeyId: 2},
+		},
 	}
 
-	err := db.ApplyUpdateChangeSets(CreateImmediateTransaction(), css)
+	err := db.ApplyUpdateChangeSets(CreateImmediateTransaction(), cs)
 	thelper.AssertNoError(t, err)
 
 	res := GetAll(t, "SELECT * FROM hello.world", map[string]*Database{"hello": db})

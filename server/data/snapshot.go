@@ -14,7 +14,7 @@ type Snapshot struct {
 	data *structs.SData
 }
 
-func TakeSnapshot(lsn int, dbs []*Database) *Snapshot {
+func TakeSnapshot(lsn int64, dbs []*Database) *Snapshot {
 	var databases []*structs.SDatabase
 	for _, db := range dbs {
 		var tables []*structs.STable
@@ -149,6 +149,6 @@ func (ss *Snapshot) ToDatabases() []*Database {
 	return dbs
 }
 
-func (ss *Snapshot) Lsn() int {
+func (ss *Snapshot) Lsn() int64 {
 	return ss.data.Lsn
 }

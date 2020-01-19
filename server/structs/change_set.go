@@ -22,7 +22,7 @@ const (
 	Abort    = 930
 )
 
-var QueryTypeMap = map[int]reflect.Type{
+var QueryTypeMap = map[int32]reflect.Type{
 	CreateDB:    reflect.TypeOf((*CreateDBChangeSet)(nil)),
 	CreateTable: reflect.TypeOf((*CreateTableChangeSet)(nil)),
 	Insert:      reflect.TypeOf((*InsertChangeSet)(nil)),
@@ -34,7 +34,7 @@ var QueryTypeMap = map[int]reflect.Type{
 	Abort:    reflect.TypeOf((*AbortChangeSet)(nil)),
 }
 
-func ToChangeSet(num int) (ChangeSet, error) {
+func ToChangeSet(num int32) (ChangeSet, error) {
 	t, ok := QueryTypeMap[num]
 	if !ok {
 		return nil, errors.Errorf("Invalid QueryType number: %d", num)
@@ -52,7 +52,7 @@ var SeparatorBytes = []byte("-")
 
 type AWalFormat struct{}
 
-func (a *AWalFormat) toWalFormatWith(lsn int, v ChangeSet, q QueryType) ([]byte, error) {
+func (a *AWalFormat) toWalFormatWith(lsn int64, v ChangeSet, q QueryType) ([]byte, error) {
 	v.setLsn(lsn)
 	bs, err := json.Marshal(v)
 	if err != nil {
@@ -66,68 +66,68 @@ func (a *AWalFormat) toWalFormatWith(lsn int, v ChangeSet, q QueryType) ([]byte,
 }
 
 type ChangeSet interface {
-	setLsn(int)
-	GetLsn() int
-	ToWalFormat(int) ([]byte, error)
+	setLsn(int64)
+	GetLsn() int64
+	ToWalFormat(int64) ([]byte, error)
 }
 
-func (cs *CreateDBChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *CreateDBChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *CreateDBChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *CreateDBChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *CreateDBChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *CreateDBChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, CreateDB)
 }
 
-func (cs *CreateTableChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *CreateTableChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *CreateTableChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *CreateTableChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *CreateTableChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *CreateTableChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, CreateTable)
 }
 
-func (cs *InsertChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *InsertChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *InsertChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *InsertChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *InsertChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *InsertChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Insert)
 }
 
-func (cs *UpdateChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *UpdateChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *UpdateChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *UpdateChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *UpdateChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *UpdateChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Update)
 }
 
-func (cs *BeginChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *BeginChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *BeginChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *BeginChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *BeginChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *BeginChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Begin)
 }
 
-func (cs *CommitChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *CommitChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *CommitChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *CommitChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *CommitChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *CommitChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Commit)
 }
 
-func (cs *RollbackChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *RollbackChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *RollbackChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *RollbackChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *RollbackChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *RollbackChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Rollback)
 }
 
-func (cs *AbortChangeSet) setLsn(lsn int) { cs.Lsn = lsn }
-func (cs *AbortChangeSet) GetLsn() int    { return cs.Lsn }
-func (cs *AbortChangeSet) ToWalFormat(lsn int) ([]byte, error) {
+func (cs *AbortChangeSet) setLsn(lsn int64) { cs.Lsn = lsn }
+func (cs *AbortChangeSet) GetLsn() int64    { return cs.Lsn }
+func (cs *AbortChangeSet) ToWalFormat(lsn int64) ([]byte, error) {
 	return cs.toWalFormatWith(lsn, cs, Abort)
 }
 
 type CreateDBChangeSet struct {
 	*AWalFormat
-	Lsn  int    `json:"lsn"`
+	Lsn  int64  `json:"lsn"`
 	Name string `json:"name"`
 }
 
 type CreateTableChangeSet struct {
 	*AWalFormat
-	Lsn      int        `json:"lsn"`
+	Lsn      int64      `json:"lsn"`
 	DBName   string     `json:"db_name"`
 	Name     string     `json:"name"`
 	RowMetas []*RowMeta `json:"row_metas"`
@@ -135,45 +135,45 @@ type CreateTableChangeSet struct {
 
 type InsertChangeSet struct {
 	*AWalFormat
-	Lsn       int               `json:"lsn"`
+	Lsn       int64             `json:"lsn"`
 	DBName    string            `json:"db_name"`
 	TableName string            `json:"table_name"`
 	Columns   map[string]string `json:"columns"`
 
-	TransactionNumber int `json:"trx_num"`
+	TransactionNumber int64 `json:"trx_num"`
 }
 
 type UpdateChangeSet struct {
 	*AWalFormat
-	Lsn          int               `json:"lsn"`
+	Lsn          int64             `json:"lsn"`
 	DBName       string            `json:"db_name"`
 	TableName    string            `json:"table_name"`
 	PrimaryKeyId int64             `json:"pk_id"`
 	Columns      map[string]string `json:"columns"`
 
-	TransactionNumber int `json:"trx_num"`
+	TransactionNumber int64 `json:"trx_num"`
 }
 
 type BeginChangeSet struct {
 	*AWalFormat
-	Lsn    int `json:"lsn"`
-	Number int `json:"trx_num"`
+	Lsn    int64 `json:"lsn"`
+	Number int64 `json:"trx_num"`
 }
 
 type RollbackChangeSet struct {
 	*AWalFormat
-	Lsn    int `json:"lsn"`
-	Number int `json:"trx_num"`
+	Lsn    int64 `json:"lsn"`
+	Number int64 `json:"trx_num"`
 }
 
 type CommitChangeSet struct {
 	*AWalFormat
-	Lsn    int `json:"lsn"`
-	Number int `json:"trx_num"`
+	Lsn    int64 `json:"lsn"`
+	Number int64 `json:"trx_num"`
 }
 
 type AbortChangeSet struct {
 	*AWalFormat
-	Lsn    int `json:"lsn"`
-	Number int `json:"trx_num"`
+	Lsn    int64 `json:"lsn"`
+	Number int64 `json:"trx_num"`
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mrasu/ddb/server/structs"
+	"github.com/mrasu/ddb/server/pbs"
 )
 
 func TestStartNewTransaction(t *testing.T) {
@@ -191,7 +191,7 @@ func TestTransaction_ApplyCommitChangeSet(t *testing.T) {
 	}
 
 	cs := trx.CreateCommitChangeSet()
-	err = trx.ApplyCommitChangeSet(cs, func(cs2 *structs.CommitChangeSet) error {
+	err = trx.ApplyCommitChangeSet(cs, func(cs2 *pbs.CommitChangeSet) error {
 		if cs != cs2 {
 			t.Errorf("afterLockfn() pass different ChangeSet")
 		}

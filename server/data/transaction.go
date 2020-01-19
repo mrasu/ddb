@@ -3,13 +3,13 @@ package data
 import (
 	"sync"
 
-	"github.com/mrasu/ddb/server/structs"
+	"github.com/mrasu/ddb/server/pbs"
 )
 
 const ImmediateTransactionNumber = -1
 
 type Transaction struct {
-	Number           int
+	Number           int64
 	valueChangedRows map[*Row]*Row
 	valueReadRows    map[*Row]int
 
@@ -17,7 +17,7 @@ type Transaction struct {
 	locking      bool
 }
 
-var lastTransactionNumber = 1
+var lastTransactionNumber int64 = 1
 var mu sync.Mutex
 
 func StartNewTransaction() *Transaction {
@@ -31,7 +31,7 @@ func StartNewTransaction() *Transaction {
 	return t
 }
 
-func newTransaction(num int) *Transaction {
+func newTransaction(num int64) *Transaction {
 	return &Transaction{
 		Number:           num,
 		valueChangedRows: map[*Row]*Row{},
@@ -87,6 +87,7 @@ func (trx *Transaction) addValueReadRow(r *Row, v int) {
 
 func (trx *Transaction) expandLock() error {
 	var lockedRows []*Row
+	// TODO: sort to avoid deadlock
 	for r, versionUsed := range trx.valueReadRows {
 		if r.isCommittedRow == false {
 			continue
@@ -116,24 +117,24 @@ func (trx *Transaction) shrinkLock() {
 	trx.valueReadRows = map[*Row]int{}
 }
 
-func (trx *Transaction) CreateBeginChangeSet() *structs.BeginChangeSet {
-	return &structs.BeginChangeSet{
+func (trx *Transaction) CreateBeginChangeSet() *pbs.BeginChangeSet {
+	return &pbs.BeginChangeSet{
 		Number: trx.Number,
 	}
 }
 
-func (trx *Transaction) ApplyBeginChangeSet(_ *structs.BeginChangeSet) {
+func (trx *Transaction) ApplyBeginChangeSet(_ *pbs.BeginChangeSet) {
 	// do nothing
 	// TODO: Allow nest?
 }
 
-func (trx *Transaction) CreateRollbackChangeSet() *structs.RollbackChangeSet {
-	return &structs.RollbackChangeSet{
+func (trx *Transaction) CreateRollbackChangeSet() *pbs.RollbackChangeSet {
+	return &pbs.RollbackChangeSet{
 		Number: trx.Number,
 	}
 }
 
-func (trx *Transaction) ApplyRollbackChangeSet(_ *structs.RollbackChangeSet) {
+func (trx *Transaction) ApplyRollbackChangeSet(_ *pbs.RollbackChangeSet) {
 	// TODO: Allow nest?
 	for existingRow, valueChangedRow := range trx.valueChangedRows {
 		existingRow.abortValueChangedRow(trx, valueChangedRow)
@@ -141,13 +142,13 @@ func (trx *Transaction) ApplyRollbackChangeSet(_ *structs.RollbackChangeSet) {
 	trx.valueChangedRows = map[*Row]*Row{}
 }
 
-func (trx *Transaction) CreateCommitChangeSet() *structs.CommitChangeSet {
-	return &structs.CommitChangeSet{
+func (trx *Transaction) CreateCommitChangeSet() *pbs.CommitChangeSet {
+	return &pbs.CommitChangeSet{
 		Number: trx.Number,
 	}
 }
 
-func (trx *Transaction) ApplyCommitChangeSet(cs *structs.CommitChangeSet, afterLockFn func(*structs.CommitChangeSet) error) error {
+func (trx *Transaction) ApplyCommitChangeSet(cs *pbs.CommitChangeSet, afterLockFn func(*pbs.CommitChangeSet) error) error {
 	err := trx.expandLock()
 	if err != nil {
 		return err
@@ -166,12 +167,12 @@ func (trx *Transaction) ApplyCommitChangeSet(cs *structs.CommitChangeSet, afterL
 	return nil
 }
 
-func (trx *Transaction) CreateAbortChangeSet() *structs.AbortChangeSet {
-	return &structs.AbortChangeSet{
+func (trx *Transaction) CreateAbortChangeSet() *pbs.AbortChangeSet {
+	return &pbs.AbortChangeSet{
 		Number: trx.Number,
 	}
 }
 
-func (trx *Transaction) ApplyAbortChangeSet(_ *structs.AbortChangeSet) {
+func (trx *Transaction) ApplyAbortChangeSet(_ *pbs.AbortChangeSet) {
 	// do nothing
 }
