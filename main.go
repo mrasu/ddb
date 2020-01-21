@@ -1,17 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/gogo/protobuf/jsonpb"
-
-	"github.com/golang/protobuf/proto"
-	"github.com/mrasu/ddb/server"
 	"github.com/mrasu/ddb/server/pbs"
+
+	"github.com/coreos/etcd/raft/raftpb"
+
+	"github.com/mrasu/ddb/server"
 	"github.com/rs/zerolog"
 )
 
@@ -24,41 +23,58 @@ func main() {
 	if err != nil {
 		die(err)
 	}
-	raft(s)
+	s2, err := server.NewServer()
+	if err != nil {
+		die(err)
+	}
+
+	rs := server.StartRaftServer(s, 1)
+	time.Sleep(1 * time.Second)
+	rs2 := runAndJoin(s2, 2, -1)
+	time.Sleep(1 * time.Second)
+
+	smokeRaft(rs)
+	time.Sleep(2 * time.Second)
+	rs.InspectServer()
+	rs2.InspectServer()
 }
 
-func raft(s *server.Server) {
-	rs := server.StartRaftServer(s, 1)
-	time.Sleep(2 * time.Second)
+func runAndJoin(s *server.Server, id uint64, parentGlobalRaftId int) *server.RaftServer {
+	rs := server.StartRaftServer(s, id)
+	cc := &raftpb.ConfChange{
+		NodeID: id,
+		Type:   raftpb.ConfChangeAddNode,
+		// TODO: gRPC
+		Context: []byte(strconv.Itoa(int(id) * -1)),
+	}
+	time.Sleep(500 * time.Millisecond)
+	rs.AskJoin(parentGlobalRaftId, cc)
 
-	fmt.Println("Proposing")
+	return rs
+}
 
+func smokeRaft(rs *server.RaftServer) {
 	cs := &pbs.ChangeSet{
 		Lsn:  1,
 		Data: &pbs.ChangeSet_CreateDB{CreateDB: &pbs.CreateDBChangeSet{Name: "hello"}},
 	}
-	out, err := proto.Marshal(cs)
-	if err != nil {
-		panic(err)
-	}
-
-	ctx := context.Background()
-	ctx2, _ := context.WithTimeout(ctx, 1*time.Second)
-	err = rs.Propose(ctx2, out)
+	err := rs.Propose(cs)
 	if err != nil {
 		fmt.Printf("ERROR: %+v\n", err)
 	}
-	fmt.Println("END!")
-	m := jsonpb.Marshaler{}
-	var buf bytes.Buffer
-	if err = m.Marshal(&buf, cs.GetCreateDB()); err != nil {
-		panic(err)
+
+	cs = &pbs.ChangeSet{
+		Lsn: 1,
+		Data: &pbs.ChangeSet_CreateTable{CreateTable: &pbs.CreateTableChangeSet{
+			DBName:   "hello",
+			Name:     "world",
+			RowMetas: nil,
+		}},
 	}
-	fmt.Println(buf.String())
-
-	time.Sleep(3 * time.Second)
-
-	s.Inspect()
+	err = rs.Propose(cs)
+	if err != nil {
+		fmt.Printf("ERROR: %+v\n", err)
+	}
 }
 
 func smoke(s *server.Server) {

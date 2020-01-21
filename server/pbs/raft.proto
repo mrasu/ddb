@@ -14,7 +14,6 @@ message ChangeSet {
         CommitChangeSet Commit = 910;
         RollbackChangeSet Rollback = 920;
         AbortChangeSet Abort = 930;
-
     }
 }
 
